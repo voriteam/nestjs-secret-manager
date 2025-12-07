@@ -1,0 +1,60 @@
+{
+  "name": "@vori/nestjs-secret-manager",
+  "version": "0.1.0",
+  "description": "NestJS module for secret management with dependency injection, startup validation, and caching",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check-format": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "clean": "rm -rf dist",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "nestjs",
+    "secrets",
+    "secret-manager",
+    "gcp",
+    "dependency-injection"
+  ],
+  "author": "Vori Engineering <eng@vori.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.6.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@nestjs/common": "^10.3.0",
+    "@nestjs/core": "^10.3.0",
+    "@nestjs/testing": "^10.3.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@trivago/prettier-plugin-sort-imports": "^6.0.0",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^30.2.0",
+    "prettier": "^3.1.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.48.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
