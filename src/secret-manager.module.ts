@@ -1,5 +1,6 @@
 import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
+import { InMemorySecretBackend } from './backends/in-memory.backend';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
 import {
   SecretManagerModuleAsyncOptions,
@@ -24,7 +25,7 @@ import { SecretManagerService } from './secret-manager.service';
  *   imports: [
  *     SecretManagerModule.forRoot({
  *       defaultBackend: 'gcp',
- *       gcpProjectId: 'my-project',
+ *       backends: [new GcpSecretManagerBackend({ projectId: 'my-project' })],
  *       validateOnStartup: true,
  *     }),
  *   ],
@@ -41,7 +42,11 @@ import { SecretManagerService } from './secret-manager.service';
  *       imports: [ConfigModule],
  *       useFactory: (config: ConfigService) => ({
  *         defaultBackend: 'gcp',
- *         gcpProjectId: config.get('GCP_PROJECT_ID'),
+ *         backends: [
+ *           new GcpSecretManagerBackend({
+ *             projectId: config.get('GCP_PROJECT_ID'),
+ *           }),
+ *         ],
  *       }),
  *       inject: [ConfigService],
  *     }),
@@ -119,7 +124,7 @@ export class SecretManagerModule {
 
     return this.forRoot({
       defaultBackend: 'memory',
-      inMemorySecrets: secrets,
+      backends: [new InMemorySecretBackend(secrets)],
       validateOnStartup: false,
       cacheEnabled: false,
     });
@@ -187,7 +192,6 @@ export class SecretManagerModule {
    */
   public static forSkipLoading(): DynamicModule {
     return this.forRoot({
-      defaultBackend: 'memory',
       skipLoading: true,
       validateOnStartup: false,
     });
