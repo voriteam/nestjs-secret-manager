@@ -46,19 +46,24 @@ pnpm add @vori/nestjs-secret-manager
 ```typescript
 // app.module.ts
 import { Module } from '@nestjs/common';
-import { SecretManagerModule } from '@vori/nestjs-secret-manager';
+import {
+  GcpSecretManagerBackend,
+  SecretManagerModule,
+} from '@vori/nestjs-secret-manager';
 
 @Module({
   imports: [
     SecretManagerModule.forRoot({
       defaultBackend: 'gcp',
-      gcpProjectId: 'my-gcp-project',
+      backends: [new GcpSecretManagerBackend('my-gcp-project')],
       validateOnStartup: true,
     }),
   ],
 })
 export class AppModule {}
 ```
+
+Each backend is responsible for its own configuration — the module itself is agnostic to which backends exist. Add as many as you need; `defaultBackend` selects the one used when `@InjectSecret` doesn't specify a backend.
 
 ### 2. Inject secrets into services
 
@@ -83,12 +88,22 @@ Secrets are fetched during application initialization and injected as plain stri
 ### `forRoot` — static configuration
 
 ```typescript
+import {
+  GcpSecretManagerBackend,
+  InMemorySecretBackend,
+  SecretManagerModule,
+} from '@vori/nestjs-secret-manager';
+
 SecretManagerModule.forRoot({
-  // Required: which backend to use when none is specified in @InjectSecret
+  // Required (unless skipLoading): name of the backend used when @InjectSecret
+  // does not specify one. Must match a backend's `name`.
   defaultBackend: 'gcp',
 
-  // Required when using the 'gcp' backend
-  gcpProjectId: 'my-project',
+  // Required (unless skipLoading): backends available for resolution.
+  backends: [
+    new GcpSecretManagerBackend('my-project'),
+    new InMemorySecretBackend({ 'local-secret': 'local-value' }),
+  ],
 
   // Fail startup if any registered secret is inaccessible (default: true)
   validateOnStartup: true,
@@ -98,11 +113,6 @@ SecretManagerModule.forRoot({
 
   // Cache TTL in milliseconds; omit to cache for the lifetime of the process
   cacheTTL: 60_000,
-
-  // Preload secrets into the in-memory backend
-  inMemorySecrets: {
-    'local-secret': 'local-value',
-  },
 
   // Enable verbose debug logging for cache hits (default: false)
   debug: false,
@@ -118,7 +128,7 @@ SecretManagerModule.forRootAsync({
   imports: [ConfigModule],
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'gcp',
-    gcpProjectId: config.get('GCP_PROJECT_ID'),
+    backends: [new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID'))],
     validateOnStartup: config.get('NODE_ENV') === 'production',
   }),
   inject: [ConfigService],
@@ -172,8 +182,6 @@ export class MyService {
 | `get({ name, version?, backend? })` | Fetch a secret; defaults to `'latest'` version and the configured default backend |
 | `getLatest({ name, backend? })` | Alias for `get({ name, version: 'latest', backend })` |
 | `clearCache()` | Flush all cached entries |
-| `registerBackend(backend)` | Register a custom `SecretBackend` implementation at runtime |
-| `getInMemoryBackend()` | Access the in-memory backend directly (useful for test setup) |
 
 ## Testing
 
@@ -210,13 +218,18 @@ describe('MyService', () => {
 
 ## Custom backends
 
-Implement `SecretBackend` to integrate any secret provider:
+Implement `SecretBackend` to integrate any secret provider, then pass an instance via `backends`:
 
 ```typescript
-import { SecretBackend } from '@vori/nestjs-secret-manager';
+import {
+  SecretBackend,
+  SecretManagerModule,
+} from '@vori/nestjs-secret-manager';
 
 class VaultBackend implements SecretBackend {
   readonly name = 'vault';
+
+  constructor(private readonly options: { url: string; token: string }) {}
 
   async get(name: string, version?: string): Promise<string> {
     // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
@@ -227,11 +240,33 @@ class VaultBackend implements SecretBackend {
   }
 }
 
-// Register at runtime
-secretManagerService.registerBackend(new VaultBackend());
+SecretManagerModule.forRoot({
+  defaultBackend: 'vault',
+  backends: [
+    new VaultBackend({ url: 'https://vault.example.com', token: '...' }),
+  ],
+});
 
 // Then use via decorator or service
 @InjectSecret('my-secret', { backend: 'vault' })
+```
+
+If your backend needs DI-resolved configuration (e.g., from `ConfigService`), use `forRootAsync` and construct the backend inside the factory:
+
+```typescript
+SecretManagerModule.forRootAsync({
+  imports: [ConfigModule],
+  useFactory: (config: ConfigService) => ({
+    defaultBackend: 'vault',
+    backends: [
+      new VaultBackend({
+        url: config.get('VAULT_URL'),
+        token: config.get('VAULT_TOKEN'),
+      }),
+    ],
+  }),
+  inject: [ConfigService],
+});
 ```
 
 ## Error handling

@@ -1,14 +1,26 @@
 import { ModuleMetadata, Type } from '@nestjs/common';
 
+import { SecretBackend } from './secret-backend.interface';
+
 /**
  * Options for configuring the SecretManagerModule.
  */
 export interface SecretManagerModuleOptions {
   /**
-   * Default backend to use when not specified in @InjectSecret.
-   * Must match a registered backend name (e.g., 'gcp', 'memory').
+   * Default backend to use when @InjectSecret does not specify one.
+   * Must match the `name` of one of the configured backends.
+   * Required unless `skipLoading` is true.
    */
-  defaultBackend: string;
+  defaultBackend?: string;
+
+  /**
+   * Backends available for secret resolution. Each backend brings its own
+   * configuration via its constructor; the module is agnostic to which
+   * backends exist.
+   *
+   * Required unless `skipLoading` is true.
+   */
+  backends?: SecretBackend[];
 
   /**
    * Whether to enable in-memory caching of secrets.
@@ -28,19 +40,6 @@ export interface SecretManagerModuleOptions {
    * @default true
    */
   validateOnStartup?: boolean;
-
-  /**
-   * GCP project ID for the GCP Secret Manager backend.
-   * Required if using the 'gcp' backend.
-   */
-  gcpProjectId?: string;
-
-  /**
-   * Secrets to preload into the in-memory backend.
-   * Useful for testing and local development.
-   * Format: { 'secret-name': 'secret-value' }
-   */
-  inMemorySecrets?: Record<string, string>;
 
   /**
    * Whether to enable debug logging for secret access.
