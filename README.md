@@ -1,14 +1,37 @@
 # @vori/nestjs-secret-manager
 
-A NestJS module for managing secrets with dependency injection, startup validation, and caching.
+A NestJS module for accessing secrets via dependency injection, with startup validation, in-memory caching, and pluggable backends.
+
+## Why use this?
+
+We created this package to solve a few repeated issues:
+
+**IAM misconfiguration**
+
+Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations surfaced at runtime instead of sooner. This module solves this by verifying that all registered secrets are accessible at startup. Inaccessible secrets fail startup, which prevents misconfigurations from entering production.
+
+**Repeated loading**
+
+Some of our secrets are accessed frequently, especially at startup time. These repeated accesses are now cached in memory, reducing overall latency to retrieve secrets.
+
+**Usage tracking**
+
+"Is this secret actually used?" We can now more definitively answer this question via telemetry—spans for each secret access—and dependency injection (e.g., tracing the dependency map).
 
 ## Features
 
-- **`@InjectSecret` decorator** - Inject secrets directly into your services
-- **Startup validation** - Fail fast if secrets are inaccessible
-- **In-memory caching** - Reduce backend API calls
-- **Multiple backends** - GCP Secret Manager, in-memory (for testing)
-- **OpenTelemetry support** - Tracing spans for secret access
+- `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
+- **Startup validation** — fail fast on boot if any registered secret is inaccessible
+- **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
+- **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
+- **Custom backends** — extend via the `SecretBackend` interface
+- **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend` attributes
+- **Global module** — register once in `AppModule`, available everywhere without re-importing
+
+## Requirements
+
+- Node.js &gt;= 24
+- NestJS `^11.0.0`
 
 ## Installation
 
@@ -16,9 +39,9 @@ A NestJS module for managing secrets with dependency injection, startup validati
 pnpm add @vori/nestjs-secret-manager
 ```
 
-## Quick Start
+## Quick start
 
-### 1. Import the module
+### 1. Register the module
 
 ```typescript
 // app.module.ts
@@ -37,7 +60,7 @@ import { SecretManagerModule } from '@vori/nestjs-secret-manager';
 export class AppModule {}
 ```
 
-### 2. Inject secrets into your services
+### 2. Inject secrets into services
 
 ```typescript
 // my.service.ts
@@ -48,51 +71,47 @@ import { InjectSecret } from '@vori/nestjs-secret-manager';
 export class MyService {
   constructor(
     @InjectSecret('api-key') private readonly apiKey: string,
-    @InjectSecret('db-password') private readonly dbPassword: string,
+    @InjectSecret('db-password', { version: '2' }) private readonly dbPassword: string,
   ) {}
-
-  async fetchUser(id: string) {
-    return fetch(`https://api.example.com/users/${id}`, {
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    });
-  }
 }
 ```
 
+Secrets are fetched during application initialization and injected as plain strings. If `validateOnStartup` is enabled (the default), the application will refuse to start if any registered secret cannot be fetched.
+
 ## Configuration
 
-### Static configuration with `forRoot`
+### `forRoot` — static configuration
 
 ```typescript
 SecretManagerModule.forRoot({
-  // Required: which backend to use by default
+  // Required: which backend to use when none is specified in @InjectSecret
   defaultBackend: 'gcp',
 
-  // Required for GCP backend
+  // Required when using the 'gcp' backend
   gcpProjectId: 'my-project',
 
-  // Optional: fail startup if secrets can't be fetched (default: true)
+  // Fail startup if any registered secret is inaccessible (default: true)
   validateOnStartup: true,
 
-  // Optional: cache fetched secrets (default: true)
+  // Enable in-memory caching (default: true)
   cacheEnabled: true,
 
-  // Optional: cache TTL in milliseconds (default: unlimited)
-  cacheTTL: 60000,
+  // Cache TTL in milliseconds; omit to cache for the lifetime of the process
+  cacheTTL: 60_000,
 
-  // Optional: preload secrets for in-memory backend
+  // Preload secrets into the in-memory backend
   inMemorySecrets: {
     'local-secret': 'local-value',
   },
 
-  // Optional: enable debug logging (default: false)
+  // Enable verbose debug logging for cache hits (default: false)
   debug: false,
 });
 ```
 
-### Async configuration with `forRootAsync`
+### `forRootAsync` — async/factory configuration
+
+Use this when options depend on other providers, such as `ConfigService`:
 
 ```typescript
 SecretManagerModule.forRootAsync({
@@ -106,9 +125,59 @@ SecretManagerModule.forRootAsync({
 });
 ```
 
+`useExisting` and `useClass` (via the `SecretManagerOptionsFactory` interface) are also supported.
+
+## Decorator options
+
+```typescript
+// Fetch the latest version from the default backend
+@InjectSecret('secret-name')
+
+// Fetch a specific version
+@InjectSecret('secret-name', { version: '3' })
+
+// Use a non-default backend
+@InjectSecret('secret-name', { backend: 'memory' })
+```
+
+## Programmatic access
+
+Inject `SecretManagerService` directly when you need runtime secret lookups:
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { SecretManagerService } from '@vori/nestjs-secret-manager';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly secrets: SecretManagerService) {}
+
+  async getConnectionString() {
+    // Fetch the latest version
+    return this.secrets.get({ name: 'db-connection-string' });
+
+    // Fetch a specific version
+    // return this.secrets.get({ name: 'db-connection-string', version: '3' });
+
+    // Fetch from a specific backend
+    // return this.secrets.get({ name: 'db-connection-string', backend: 'memory' });
+  }
+}
+```
+
+### Additional service methods
+
+| Method | Description |
+| --- | --- |
+| `get({ name, version?, backend? })` | Fetch a secret; defaults to `'latest'` version and the configured default backend |
+| `getLatest({ name, backend? })` | Alias for `get({ name, version: 'latest', backend })` |
+| `clearCache()` | Flush all cached entries |
+| `registerBackend(backend)` | Register a custom `SecretBackend` implementation at runtime |
+| `getInMemoryBackend()` | Access the in-memory backend directly (useful for test setup) |
+
 ## Testing
 
-Use `forTesting` for easy test setup:
+`forTesting` configures the module with the in-memory backend and disables startup validation, making test setup lightweight:
 
 ```typescript
 import { Test } from '@nestjs/testing';
@@ -131,120 +200,43 @@ describe('MyService', () => {
     service = module.get<MyService>(MyService);
   });
 
-  it('should use test secrets', () => {
-    // Your tests here
+  it('should use test secrets', async () => {
+    // ...
   });
 });
 ```
 
-### Testing utilities subpath
+`forTesting` also clears the internal secret registry between calls to prevent pollution across test suites.
 
-For advanced test setups that need direct access to the DI token or the secret
-registry, import from the `/testing` subpath:
+## Custom backends
 
-```typescript
-import {
-  SECRET_MANAGER_OPTIONS,
-  secretRegistry,
-} from '@vori/nestjs-secret-manager/testing';
-```
-
-- `SECRET_MANAGER_OPTIONS` — the injection token, useful when manually wiring
-  options via `Test.createTestingModule({ providers: [{ provide: ..., useValue: ... }] })`.
-- `secretRegistry` — the global registry of secrets declared via `@InjectSecret`.
-  Call `secretRegistry.clear()` between tests to reset state.
-
-These exports are deliberately kept out of the main entry point — they are
-intended for tests, not production code paths.
-
-## Skip Loading (CLI Tools / No-Access Environments)
-
-Use `forSkipLoading` when running in environments without secret backend access
-(e.g., CLI tools like OpenAPI generation, or Coder.com dev environments):
-
-```typescript
-@Module({
-  imports: [
-    SecretManagerModule.forSkipLoading(),
-  ],
-})
-export class AppModule {}
-```
-
-All `@InjectSecret` values will be placeholder strings (`SECRET_NOT_LOADED:<name>`)
-and no backend connections or validation will occur.
-
-You can also enable this via the `skipLoading` option in `forRoot` or `forRootAsync`:
-
-```typescript
-SecretManagerModule.forRoot({
-  defaultBackend: 'gcp',
-  gcpProjectId: 'my-project',
-  skipLoading: process.env.SKIP_SECRET_LOADING === 'true',
-});
-```
-
-## Decorator Options
-
-```typescript
-@InjectSecret('secret-name')                           // Basic usage
-@InjectSecret('secret-name', { version: '2' })         // Specific version
-@InjectSecret('secret-name', { backend: 'memory' })    // Specific backend
-```
-
-## Programmatic Access
-
-You can also use `SecretManagerService` directly:
-
-```typescript
-import { Injectable } from '@nestjs/common';
-import { SecretManagerService } from '@vori/nestjs-secret-manager';
-
-@Injectable()
-export class MyService {
-  constructor(private readonly secrets: SecretManagerService) {}
-
-  async getSecret() {
-    // Get latest version
-    const value = await this.secrets.get('my-secret');
-
-    // Get specific version
-    const v2 = await this.secrets.get('my-secret', '2');
-
-    // Get from specific backend
-    const local = await this.secrets.get('my-secret', undefined, 'memory');
-
-    return value;
-  }
-}
-```
-
-## Custom Backends
-
-Implement the `SecretBackend` interface to add custom providers:
+Implement `SecretBackend` to integrate any secret provider:
 
 ```typescript
 import { SecretBackend } from '@vori/nestjs-secret-manager';
 
-class MyCustomBackend implements SecretBackend {
-  readonly name = 'custom';
+class VaultBackend implements SecretBackend {
+  readonly name = 'vault';
 
   async get(name: string, version?: string): Promise<string> {
-    // Your implementation
+    // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
   }
 
   async getLatest(name: string): Promise<string> {
-    return this.get(name, 'latest');
+    return this.get(name);
   }
 }
 
-// Register in your service
-secretManagerService.registerBackend(new MyCustomBackend());
+// Register at runtime
+secretManagerService.registerBackend(new VaultBackend());
+
+// Then use via decorator or service
+@InjectSecret('my-secret', { backend: 'vault' })
 ```
 
-## Error Handling
+## Error handling
 
-The module throws specific errors you can catch:
+The module throws typed errors you can catch and handle specifically:
 
 ```typescript
 import {
@@ -253,23 +245,41 @@ import {
 } from '@vori/nestjs-secret-manager';
 
 try {
-  await secrets.get('my-secret');
+  await secrets.get({ name: 'my-secret' });
 } catch (error) {
   if (error instanceof SecretNotFoundError) {
-    console.log('Secret does not exist:', error.secretName);
+    // error.secretName, error.backend, error.version
+    console.error('Secret does not exist:', error.secretName);
   } else if (error instanceof SecretAccessDeniedError) {
-    console.log('Access denied:', error.reason);
+    // error.secretName, error.backend, error.reason
+    console.error('Permission denied:', error.reason);
   }
 }
 ```
 
-## OpenTelemetry Support
+Here is how Google Secret Manager gRPC statuses are mapped:
 
-The module creates spans for all secret fetches:
+| gRPC status | Code | Error thrown |
+| --- | --- | --- |
+| `NOT_FOUND` | 5 | `SecretNotFoundError` |
+| `PERMISSION_DENIED` | 7 | `SecretAccessDeniedError` |
 
-- Span name: `secret.get`
-- Attributes: `secret.name`, `secret.version`, `secret.backend`
+## GCP authentication
 
-## License
+The GCP backend uses [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials). No explicit credential configuration is required when running on GCP (Cloud Run, GKE, etc.). For local development, authenticate with:
 
-MIT
+```bash
+gcloud auth application-default login
+```
+
+## OpenTelemetry
+
+Every secret fetch creates a `secret.get` span with the following attributes:
+
+| Attribute | Description |
+| --- | --- |
+| `secret.name` | The name of the secret |
+| `secret.version` | The resolved version (e.g. `latest` or `3`) |
+| `secret.backend` | The backend used (e.g. `gcp`, `memory`) |
+
+Errors are recorded on the span and the span status is set to `ERROR`.

@@ -56,7 +56,7 @@ export class SecretManagerModule {
   /**
    * Configure the module with static options.
    */
-  static forRoot(options: SecretManagerModuleOptions): DynamicModule {
+  public static forRoot(options: SecretManagerModuleOptions): DynamicModule {
     const secretProviders = this.createSecretProviders();
 
     return {
@@ -76,7 +76,9 @@ export class SecretManagerModule {
   /**
    * Configure the module with async options.
    */
-  static forRootAsync(options: SecretManagerModuleAsyncOptions): DynamicModule {
+  public static forRootAsync(
+    options: SecretManagerModuleAsyncOptions,
+  ): DynamicModule {
     const secretProviders = this.createSecretProviders();
 
     return {
@@ -109,7 +111,9 @@ export class SecretManagerModule {
    * }).compile();
    * ```
    */
-  static forTesting(secrets: Record<string, string> = {}): DynamicModule {
+  public static forTesting(
+    secrets: Record<string, string> = {},
+  ): DynamicModule {
     // Clear registry to avoid pollution between tests
     secretRegistry.clear();
 
@@ -181,7 +185,7 @@ export class SecretManagerModule {
    * @InjectSecret injects placeholder strings (`SECRET_NOT_LOADED:<name>`).
    * Useful for CLI tools and environments without secret backend access.
    */
-  static forSkipLoading(): DynamicModule {
+  public static forSkipLoading(): DynamicModule {
     return this.forRoot({
       defaultBackend: 'memory',
       skipLoading: true,
@@ -199,7 +203,11 @@ export class SecretManagerModule {
     return secrets.map((secret) => ({
       provide: secret.token,
       useFactory: async (service: SecretManagerService): Promise<string> => {
-        return service.get(secret.name, secret.version, secret.backend);
+        return service.get({
+          name: secret.name,
+          version: secret.version,
+          backend: secret.backend,
+        });
       },
       inject: [SecretManagerService],
     }));

@@ -32,7 +32,7 @@ describe('SecretManagerModule (e2e)', () => {
       }).compile();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
-      const value = await service.get('test-secret');
+      const value = await service.get({ name: 'test-secret' });
 
       expect(value).toBe('test-value');
 
@@ -53,8 +53,8 @@ describe('SecretManagerModule (e2e)', () => {
 
       const service = module.get<SecretManagerService>(SecretManagerService);
 
-      expect(await service.get('api-key')).toBe('test-api-key');
-      expect(await service.get('db-password')).toBe('test-password');
+      expect(await service.get({ name: 'api-key' })).toBe('test-api-key');
+      expect(await service.get({ name: 'db-password' })).toBe('test-password');
 
       await module.close();
     });
@@ -78,7 +78,7 @@ describe('SecretManagerModule (e2e)', () => {
         constructor(private readonly secretManager: SecretManagerService) {}
 
         async getApiKey() {
-          return this.secretManager.get('api-key');
+          return this.secretManager.get({ name: 'api-key' });
         }
       }
 
@@ -117,7 +117,7 @@ describe('SecretManagerModule (e2e)', () => {
       }).compile();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
-      const value = await service.get('async-secret');
+      const value = await service.get({ name: 'async-secret' });
 
       expect(value).toBe('async-value');
 
@@ -156,7 +156,7 @@ describe('SecretManagerModule (e2e)', () => {
       }).compile();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
-      const value = await service.get('project-secret');
+      const value = await service.get({ name: 'project-secret' });
 
       expect(value).toBe('test-project');
 
@@ -171,7 +171,7 @@ describe('SecretManagerModule (e2e)', () => {
         constructor(private readonly secretManager: SecretManagerService) {}
 
         async getSecret(name: string) {
-          return this.secretManager.get(name);
+          return this.secretManager.get({ name });
         }
       }
 
@@ -210,7 +210,7 @@ describe('SecretManagerModule (e2e)', () => {
       // Add a secret dynamically
       service.getInMemoryBackend().set('dynamic-secret', 'dynamic-value');
 
-      const value = await service.get('dynamic-secret');
+      const value = await service.get({ name: 'dynamic-secret' });
       expect(value).toBe('dynamic-value');
 
       await module.close();
@@ -224,7 +224,7 @@ describe('SecretManagerModule (e2e)', () => {
       }).compile();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
-      const value = await service.get('any-secret');
+      const value = await service.get({ name: 'any-secret' });
 
       expect(value).toBe('SECRET_NOT_LOADED:any-secret');
 
@@ -269,7 +269,7 @@ describe('SecretManagerModule (e2e)', () => {
       await expect(module.init()).resolves.not.toThrow();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
-      const value = await service.get('any-secret');
+      const value = await service.get({ name: 'any-secret' });
       expect(value).toBe('SECRET_NOT_LOADED:any-secret');
 
       await module.close();

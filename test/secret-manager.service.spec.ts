@@ -43,50 +43,50 @@ describe('SecretManagerService', () => {
 
   describe('get', () => {
     it('should retrieve a secret from in-memory backend', async () => {
-      const value = await service.get('api-key');
+      const value = await service.get({ name: 'api-key' });
       expect(value).toBe('test-api-key-value');
     });
 
     it('should retrieve another secret', async () => {
-      const value = await service.get('db-password');
+      const value = await service.get({ name: 'db-password' });
       expect(value).toBe('test-db-password');
     });
 
     it('should throw SecretNotFoundError for non-existent secret', async () => {
-      await expect(service.get('non-existent')).rejects.toThrow(
+      await expect(service.get({ name: 'non-existent' })).rejects.toThrow(
         SecretNotFoundError,
       );
     });
 
     it('should cache secret values', async () => {
       // First call
-      await service.get('api-key');
+      await service.get({ name: 'api-key' });
 
       // Modify the backend directly
       const backend = service.getInMemoryBackend();
       backend.set('api-key', 'modified-value');
 
       // Second call should return cached value
-      const cachedValue = await service.get('api-key');
+      const cachedValue = await service.get({ name: 'api-key' });
       expect(cachedValue).toBe('test-api-key-value');
     });
 
     it('should return fresh value after cache is cleared', async () => {
-      await service.get('api-key');
+      await service.get({ name: 'api-key' });
 
       const backend = service.getInMemoryBackend();
       backend.set('api-key', 'modified-value');
 
       service.clearCache();
 
-      const freshValue = await service.get('api-key');
+      const freshValue = await service.get({ name: 'api-key' });
       expect(freshValue).toBe('modified-value');
     });
   });
 
   describe('getLatest', () => {
     it('should retrieve the latest version of a secret', async () => {
-      const value = await service.getLatest('api-key');
+      const value = await service.getLatest({ name: 'api-key' });
       expect(value).toBe('test-api-key-value');
     });
   });
@@ -103,7 +103,7 @@ describe('SecretManagerService', () => {
 
       service.clearCache();
 
-      const value = await service.get('new-secret');
+      const value = await service.get({ name: 'new-secret' });
       expect(value).toBe('new-value');
     });
   });
@@ -117,7 +117,10 @@ describe('SecretManagerService', () => {
 
       service.registerBackend(customBackend);
 
-      const value = await service.get('custom-secret', undefined, 'custom');
+      const value = await service.get({
+        name: 'custom-secret',
+        backend: 'custom',
+      });
       expect(value).toBe('custom-value');
     });
   });
@@ -125,7 +128,7 @@ describe('SecretManagerService', () => {
   describe('unknown backend', () => {
     it('should throw error for unknown backend', async () => {
       await expect(
-        service.get('api-key', undefined, 'unknown'),
+        service.get({ name: 'api-key', backend: 'unknown' }),
       ).rejects.toThrow("Unknown secret backend: 'unknown'");
     });
   });
@@ -213,13 +216,13 @@ describe('SecretManagerService without caching', () => {
   });
 
   it('should not cache when caching is disabled', async () => {
-    await service.get('api-key');
+    await service.get({ name: 'api-key' });
 
     const backend = service.getInMemoryBackend();
     backend.set('api-key', 'modified-value');
 
     // Should get fresh value since caching is disabled
-    const value = await service.get('api-key');
+    const value = await service.get({ name: 'api-key' });
     expect(value).toBe('modified-value');
   });
 });

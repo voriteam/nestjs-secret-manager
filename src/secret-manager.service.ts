@@ -64,7 +64,7 @@ export class SecretManagerService implements OnModuleInit {
     }
   }
 
-  async onModuleInit(): Promise<void> {
+  public async onModuleInit(): Promise<void> {
     if (this.options.skipLoading || this.options.validateOnStartup === false) {
       return;
     }
@@ -89,7 +89,11 @@ export class SecretManagerService implements OnModuleInit {
 
     for (const secret of secrets) {
       try {
-        await this.get(secret.name, secret.version, secret.backend);
+        await this.get({
+          name: secret.name,
+          version: secret.version,
+          backend: secret.backend,
+        });
         this.logger.log(`Secret validated: ${secret.name}`);
       } catch (error) {
         errors.push(error as Error);
@@ -110,16 +114,18 @@ export class SecretManagerService implements OnModuleInit {
   /**
    * Get a secret value.
    *
-   * @param name - Secret name
-   * @param version - Optional version (defaults to 'latest')
-   * @param backendName - Optional backend name (uses default if not specified)
+   * @param options.name - Secret name
+   * @param options.version - Optional version (defaults to 'latest')
+   * @param options.backend - Optional backend name (uses the configured default if omitted)
    * @returns The secret value
    */
-  async get(
-    name: string,
-    version?: string,
-    backendName?: string,
-  ): Promise<string> {
+  public async get(options: {
+    name: string;
+    version?: string;
+    backend?: string;
+  }): Promise<string> {
+    const { name, version, backend: backendName } = options;
+
     if (this.options.skipLoading) {
       return `SECRET_NOT_LOADED:${name}`;
     }
@@ -186,12 +192,19 @@ export class SecretManagerService implements OnModuleInit {
   /**
    * Get the latest version of a secret.
    *
-   * @param name - Secret name
-   * @param backendName - Optional backend name
+   * @param options.name - Secret name
+   * @param options.backend - Optional backend name (uses the configured default if omitted)
    * @returns The secret value
    */
-  async getLatest(name: string, backendName?: string): Promise<string> {
-    return this.get(name, 'latest', backendName);
+  public async getLatest(options: {
+    name: string;
+    backend?: string;
+  }): Promise<string> {
+    return this.get({
+      name: options.name,
+      version: 'latest',
+      backend: options.backend,
+    });
   }
 
   /**
@@ -215,14 +228,14 @@ export class SecretManagerService implements OnModuleInit {
    * Get the in-memory backend.
    * Useful for test setup.
    */
-  getInMemoryBackend(): InMemorySecretBackend {
+  public getInMemoryBackend(): InMemorySecretBackend {
     return this.backends.get('memory') as InMemorySecretBackend;
   }
 
   /**
    * Clear the secret cache.
    */
-  clearCache(): void {
+  public clearCache(): void {
     this.cache.clear();
     this.logger.log('Secret cache cleared');
   }
@@ -232,7 +245,7 @@ export class SecretManagerService implements OnModuleInit {
    *
    * @param backend - Backend implementation
    */
-  registerBackend(backend: SecretBackend): void {
+  public registerBackend(backend: SecretBackend): void {
     this.backends.set(backend.name, backend);
     this.logger.log(`Registered custom backend: ${backend.name}`);
   }
