@@ -1,8 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 
-import { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';
-import { InMemorySecretBackend } from './backends/in-memory.backend';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
 import { SecretBackend } from './interfaces/secret-backend.interface';
 import { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
@@ -41,25 +39,30 @@ export class SecretManagerService implements OnModuleInit {
       return;
     }
 
-    // Initialize GCP backend if project ID is provided
-    if (this.options.gcpProjectId) {
-      this.backends.set(
-        'gcp',
-        new GcpSecretManagerBackend(this.options.gcpProjectId),
+    const backends = this.options.backends ?? [];
+
+    if (backends.length === 0) {
+      throw new Error(
+        'SecretManagerModule requires at least one backend in `backends`, or `skipLoading: true`.',
       );
-      this.logger.log('GCP Secret Manager backend initialized');
     }
 
-    // Initialize in-memory backend
-    const memoryBackend = new InMemorySecretBackend(
-      this.options.inMemorySecrets,
-    );
-    this.backends.set('memory', memoryBackend);
+    for (const backend of backends) {
+      if (this.backends.has(backend.name)) {
+        throw new Error(
+          `Duplicate backend name: '${backend.name}'. Each backend must have a unique name.`,
+        );
+      }
+      this.backends.set(backend.name, backend);
+      this.logger.log(`Registered backend: ${backend.name}`);
+    }
 
-    if (this.options.inMemorySecrets) {
-      const secretCount = Object.keys(this.options.inMemorySecrets).length;
-      this.logger.log(
-        `In-memory backend initialized with ${secretCount} secret(s)`,
+    if (
+      this.options.defaultBackend &&
+      !this.backends.has(this.options.defaultBackend)
+    ) {
+      throw new Error(
+        `defaultBackend '${this.options.defaultBackend}' is not among the configured backends: ${Array.from(this.backends.keys()).join(', ')}`,
       );
     }
   }
@@ -208,11 +211,19 @@ export class SecretManagerService implements OnModuleInit {
   }
 
   /**
-   * Get a backend by name.
-   * Falls back to the default backend if not specified.
+   * Get a backend by name. Falls back to the configured default if no name
+   * is given. Throws if the backend isn't configured.
    */
   private getBackend(name?: string): SecretBackend {
     const backendName = name ?? this.options.defaultBackend;
+
+    if (!backendName) {
+      throw new Error(
+        'No backend specified and no defaultBackend configured. ' +
+          'Pass `backend` to get(), or set `defaultBackend` in module options.',
+      );
+    }
+
     const backend = this.backends.get(backendName);
 
     if (!backend) {
@@ -225,28 +236,10 @@ export class SecretManagerService implements OnModuleInit {
   }
 
   /**
-   * Get the in-memory backend.
-   * Useful for test setup.
-   */
-  public getInMemoryBackend(): InMemorySecretBackend {
-    return this.backends.get('memory') as InMemorySecretBackend;
-  }
-
-  /**
    * Clear the secret cache.
    */
   public clearCache(): void {
     this.cache.clear();
     this.logger.log('Secret cache cleared');
-  }
-
-  /**
-   * Register a custom backend.
-   *
-   * @param backend - Backend implementation
-   */
-  public registerBackend(backend: SecretBackend): void {
-    this.backends.set(backend.name, backend);
-    this.logger.log(`Registered custom backend: ${backend.name}`);
   }
 }

@@ -2,6 +2,7 @@ import { Injectable, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
 import {
+  InMemorySecretBackend,
   InjectSecret,
   SecretManagerModule,
   SecretManagerService,
@@ -23,9 +24,9 @@ describe('SecretManagerModule (e2e)', () => {
         imports: [
           SecretManagerModule.forRoot({
             defaultBackend: 'memory',
-            inMemorySecrets: {
-              'test-secret': 'test-value',
-            },
+            backends: [
+              new InMemorySecretBackend({ 'test-secret': 'test-value' }),
+            ],
             validateOnStartup: false,
           }),
         ],
@@ -107,9 +108,9 @@ describe('SecretManagerModule (e2e)', () => {
           SecretManagerModule.forRootAsync({
             useFactory: () => ({
               defaultBackend: 'memory',
-              inMemorySecrets: {
-                'async-secret': 'async-value',
-              },
+              backends: [
+                new InMemorySecretBackend({ 'async-secret': 'async-value' }),
+              ],
               validateOnStartup: false,
             }),
           }),
@@ -145,9 +146,11 @@ describe('SecretManagerModule (e2e)', () => {
             imports: [ConfigModule],
             useFactory: (config: { projectId: string }) => ({
               defaultBackend: 'memory',
-              inMemorySecrets: {
-                'project-secret': config.projectId,
-              },
+              backends: [
+                new InMemorySecretBackend({
+                  'project-secret': config.projectId,
+                }),
+              ],
               validateOnStartup: false,
             }),
             inject: [CONFIG_TOKEN],
@@ -201,14 +204,23 @@ describe('SecretManagerModule (e2e)', () => {
 
   describe('in-memory backend manipulation', () => {
     it('should allow adding secrets after module creation', async () => {
+      const memoryBackend = new InMemorySecretBackend();
+
       const module = await Test.createTestingModule({
-        imports: [SecretManagerModule.forTesting()],
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [memoryBackend],
+            validateOnStartup: false,
+            cacheEnabled: false,
+          }),
+        ],
       }).compile();
 
       const service = module.get<SecretManagerService>(SecretManagerService);
 
-      // Add a secret dynamically
-      service.getInMemoryBackend().set('dynamic-secret', 'dynamic-value');
+      // Mutate the backend reference held by the test
+      memoryBackend.set('dynamic-secret', 'dynamic-value');
 
       const value = await service.get({ name: 'dynamic-secret' });
       expect(value).toBe('dynamic-value');
@@ -258,8 +270,8 @@ describe('SecretManagerModule (e2e)', () => {
       const module = await Test.createTestingModule({
         imports: [
           SecretManagerModule.forRoot({
-            defaultBackend: 'gcp',
-            gcpProjectId: 'nonexistent-project',
+            // skipLoading short-circuits backend initialization, so
+            // no backends need to be configured.
             skipLoading: true,
           }),
         ],

@@ -10,10 +10,15 @@ import { SECRET_MANAGER_OPTIONS, secretRegistry } from '../src/testing';
 describe('SecretManagerService', () => {
   let service: SecretManagerService;
   let module: TestingModule;
+  let memoryBackend: InMemorySecretBackend;
 
   beforeEach(async () => {
-    // Clear the registry before each test
     secretRegistry.clear();
+
+    memoryBackend = new InMemorySecretBackend({
+      'api-key': 'test-api-key-value',
+      'db-password': 'test-db-password',
+    });
 
     module = await Test.createTestingModule({
       providers: [
@@ -22,10 +27,7 @@ describe('SecretManagerService', () => {
           provide: SECRET_MANAGER_OPTIONS,
           useValue: {
             defaultBackend: 'memory',
-            inMemorySecrets: {
-              'api-key': 'test-api-key-value',
-              'db-password': 'test-db-password',
-            },
+            backends: [memoryBackend],
             validateOnStartup: false,
             cacheEnabled: true,
           },
@@ -59,14 +61,10 @@ describe('SecretManagerService', () => {
     });
 
     it('should cache secret values', async () => {
-      // First call
       await service.get({ name: 'api-key' });
 
-      // Modify the backend directly
-      const backend = service.getInMemoryBackend();
-      backend.set('api-key', 'modified-value');
+      memoryBackend.set('api-key', 'modified-value');
 
-      // Second call should return cached value
       const cachedValue = await service.get({ name: 'api-key' });
       expect(cachedValue).toBe('test-api-key-value');
     });
@@ -74,9 +72,7 @@ describe('SecretManagerService', () => {
     it('should return fresh value after cache is cleared', async () => {
       await service.get({ name: 'api-key' });
 
-      const backend = service.getInMemoryBackend();
-      backend.set('api-key', 'modified-value');
-
+      memoryBackend.set('api-key', 'modified-value');
       service.clearCache();
 
       const freshValue = await service.get({ name: 'api-key' });
@@ -91,37 +87,35 @@ describe('SecretManagerService', () => {
     });
   });
 
-  describe('getInMemoryBackend', () => {
-    it('should return the in-memory backend', () => {
-      const backend = service.getInMemoryBackend();
-      expect(backend).toBeInstanceOf(InMemorySecretBackend);
-    });
-
-    it('should allow modifying secrets for testing', async () => {
-      const backend = service.getInMemoryBackend();
-      backend.set('new-secret', 'new-value');
-
-      service.clearCache();
-
-      const value = await service.get({ name: 'new-secret' });
-      expect(value).toBe('new-value');
-    });
-  });
-
-  describe('registerBackend', () => {
-    it('should register a custom backend', async () => {
+  describe('custom backends', () => {
+    it('should resolve secrets from a non-default backend', async () => {
       const customBackend = new InMemorySecretBackend({
         'custom-secret': 'custom-value',
       });
       Object.defineProperty(customBackend, 'name', { value: 'custom' });
 
-      service.registerBackend(customBackend);
+      const customModule = await Test.createTestingModule({
+        providers: [
+          SecretManagerService,
+          {
+            provide: SECRET_MANAGER_OPTIONS,
+            useValue: {
+              defaultBackend: 'memory',
+              backends: [new InMemorySecretBackend(), customBackend],
+              validateOnStartup: false,
+            },
+          },
+        ],
+      }).compile();
+      const customService = customModule.get(SecretManagerService);
 
-      const value = await service.get({
+      const value = await customService.get({
         name: 'custom-secret',
         backend: 'custom',
       });
       expect(value).toBe('custom-value');
+
+      await customModule.close();
     });
   });
 
@@ -144,7 +138,6 @@ describe('SecretManagerService with validation', () => {
   });
 
   it('should validate secrets on startup when enabled', async () => {
-    // Register a secret requirement
     secretRegistry.register('api-key');
 
     const module = await Test.createTestingModule({
@@ -154,16 +147,13 @@ describe('SecretManagerService with validation', () => {
           provide: SECRET_MANAGER_OPTIONS,
           useValue: {
             defaultBackend: 'memory',
-            inMemorySecrets: {
-              'api-key': 'value',
-            },
+            backends: [new InMemorySecretBackend({ 'api-key': 'value' })],
             validateOnStartup: true,
           },
         },
       ],
     }).compile();
 
-    // This should not throw because the secret exists
     await module.init();
     await module.close();
   });
@@ -173,7 +163,7 @@ describe('SecretManagerService with validation', () => {
 
     const service = new SecretManagerService({
       defaultBackend: 'memory',
-      inMemorySecrets: {},
+      backends: [new InMemorySecretBackend()],
       validateOnStartup: true,
     });
 
@@ -186,9 +176,12 @@ describe('SecretManagerService with validation', () => {
 describe('SecretManagerService without caching', () => {
   let service: SecretManagerService;
   let module: TestingModule;
+  let memoryBackend: InMemorySecretBackend;
 
   beforeEach(async () => {
     secretRegistry.clear();
+
+    memoryBackend = new InMemorySecretBackend({ 'api-key': 'initial-value' });
 
     module = await Test.createTestingModule({
       providers: [
@@ -197,9 +190,7 @@ describe('SecretManagerService without caching', () => {
           provide: SECRET_MANAGER_OPTIONS,
           useValue: {
             defaultBackend: 'memory',
-            inMemorySecrets: {
-              'api-key': 'initial-value',
-            },
+            backends: [memoryBackend],
             validateOnStartup: false,
             cacheEnabled: false,
           },
@@ -218,10 +209,8 @@ describe('SecretManagerService without caching', () => {
   it('should not cache when caching is disabled', async () => {
     await service.get({ name: 'api-key' });
 
-    const backend = service.getInMemoryBackend();
-    backend.set('api-key', 'modified-value');
+    memoryBackend.set('api-key', 'modified-value');
 
-    // Should get fresh value since caching is disabled
     const value = await service.get({ name: 'api-key' });
     expect(value).toBe('modified-value');
   });
