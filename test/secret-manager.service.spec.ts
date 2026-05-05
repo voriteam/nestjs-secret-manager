@@ -126,6 +126,13 @@ describe('SecretManagerService', () => {
       const bytes = await service.getLatestBytes({ name: 'api-key' });
       expect(new TextDecoder().decode(bytes)).toBe('v2');
     });
+
+    it('mutating returned bytes does not corrupt the cache', async () => {
+      const first = await service.getBytes({ name: 'api-key' });
+      first.fill(0); // attempt to corrupt
+      const second = await service.getBytes({ name: 'api-key' });
+      expect(new TextDecoder().decode(second)).toBe('test-api-key-value');
+    });
   });
 
   describe('getLatest', () => {

@@ -38,7 +38,10 @@ export class GcpSecretManagerBackend implements SecretBackend {
 
       const payload = response.payload?.data;
 
-      if (!payload) {
+      // Distinguish "absent" from "empty" — an empty string/buffer is a
+      // legitimate (if unusual) secret payload and must not be reported as
+      // missing.
+      if (payload == null) {
         throw new SecretNotFoundError(name, this.name, version);
       }
 

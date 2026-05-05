@@ -32,13 +32,17 @@ export class InMemorySecretBackend implements SecretBackend {
   }
 
   /**
-   * Set a secret value. Strings are encoded as UTF-8.
+   * Set a secret value. Strings are encoded as UTF-8. Byte inputs are
+   * copied so later mutations of the caller's array don't affect storage.
    */
   set(name: string, value: string | Uint8Array, version = 'latest'): void {
     if (!this.secrets.has(name)) {
       this.secrets.set(name, new Map());
     }
-    const bytes = typeof value === 'string' ? utf8Encoder.encode(value) : value;
+    const bytes =
+      typeof value === 'string'
+        ? utf8Encoder.encode(value)
+        : new Uint8Array(value);
     this.secrets.get(name)!.set(version, bytes);
   }
 
@@ -52,7 +56,8 @@ export class InMemorySecretBackend implements SecretBackend {
     if (value === undefined) {
       throw new SecretNotFoundError(name, this.name, version);
     }
-    return value;
+    // Defensive copy — callers must not be able to mutate stored values.
+    return new Uint8Array(value);
   }
 
   async get(name: string, version?: string): Promise<string> {

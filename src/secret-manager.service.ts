@@ -308,7 +308,8 @@ export class SecretManagerService implements OnModuleInit {
         if (this.#options.debug) {
           this.#logger.debug(`Cache hit for secret bytes: ${name}`);
         }
-        return cached;
+        // Defensive copy — caller mutations must not corrupt the cache.
+        return new Uint8Array(cached);
       }
     }
 
@@ -322,7 +323,9 @@ export class SecretManagerService implements OnModuleInit {
     const value = await backend.getBytes(name, version);
 
     if (this.#options.cacheEnabled !== false) {
-      this.#bytesCache.set(backend.name, name, value, version);
+      // Store our own copy so a subsequent backend.getBytes mutation, or
+      // shared-reference shenanigans from a custom backend, can't reach in.
+      this.#bytesCache.set(backend.name, name, new Uint8Array(value), version);
     }
 
     return value;

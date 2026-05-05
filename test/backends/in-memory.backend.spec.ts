@@ -115,6 +115,26 @@ describe('InMemorySecretBackend', () => {
       );
       expect(await seeded.get('text')).toBe('hi');
     });
+
+    it('mutating the array passed to set does not affect storage', async () => {
+      const input = new Uint8Array([1, 2, 3]);
+      backend.set('k', input);
+      input[0] = 0xff;
+      expect(await backend.getBytes('k')).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it('mutating the array returned from getBytes does not affect storage', async () => {
+      backend.set('k', new Uint8Array([1, 2, 3]));
+      const first = await backend.getBytes('k');
+      first[0] = 0xff;
+      const second = await backend.getBytes('k');
+      expect(second).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it('round-trips an empty Uint8Array', async () => {
+      backend.set('empty', new Uint8Array(0));
+      expect(await backend.getBytes('empty')).toEqual(new Uint8Array(0));
+    });
   });
 
   describe('has', () => {
