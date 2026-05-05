@@ -1,10 +1,16 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
+import type { Tracer } from '@opentelemetry/api';
 
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
-import { SecretBackend } from './interfaces/secret-backend.interface';
-import { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
+import type { SecretBackend } from './interfaces/secret-backend.interface';
+import type { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
 import { SecretCache } from './secret-cache';
+
+/** Default cache TTL when none is configured: 15 minutes. */
+const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
+
+const REDACTED = '[SecretManagerService redacted]';
 
 /**
  * Service for accessing secrets from configured backends.
@@ -14,32 +20,48 @@ import { SecretCache } from './secret-cache';
  * - Startup validation of all registered secrets
  * - OpenTelemetry tracing
  * - Multiple backend support
+ *
+ * Internal state (backends map, cache, options) is held in JS `#private`
+ * fields so it is unreachable via property access. `toJSON` and
+ * `util.inspect.custom` redact the instance to prevent secret leakage when
+ * a service holding the cache is accidentally serialized.
  */
 @Injectable()
 export class SecretManagerService implements OnModuleInit {
-  private readonly logger = new Logger(SecretManagerService.name);
-  private readonly backends = new Map<string, SecretBackend>();
-  private readonly cache: SecretCache;
-  private readonly tracer = trace.getTracer('secret-manager');
+  readonly #logger = new Logger(SecretManagerService.name);
+  readonly #backends = new Map<string, SecretBackend>();
+  readonly #cache: SecretCache;
+  readonly #tracer: Tracer = trace.getTracer('secret-manager');
+  readonly #options: SecretManagerModuleOptions;
 
   constructor(
-    @Inject(SECRET_MANAGER_OPTIONS)
-    private readonly options: SecretManagerModuleOptions,
+    @Inject(SECRET_MANAGER_OPTIONS) options: SecretManagerModuleOptions,
   ) {
-    // Initialize cache
-    const cacheEnabled = options.cacheEnabled !== false;
-    this.cache = new SecretCache(cacheEnabled ? options.cacheTTL : undefined);
-
-    // Initialize backends
-    this.initializeBackends();
+    this.#options = options;
+    this.#cache = new SecretCache(this.#resolveCacheTtl(options));
+    this.#initializeBackends();
   }
 
-  private initializeBackends(): void {
-    if (this.options.skipLoading) {
+  #resolveCacheTtl(options: SecretManagerModuleOptions): number | undefined {
+    if (options.cacheEnabled === false) {
+      return undefined;
+    }
+    if (options.cacheTTL === undefined) {
+      return DEFAULT_CACHE_TTL_MS;
+    }
+    // Treat explicit 0 as "never expire" — the documented escape hatch.
+    if (options.cacheTTL === 0) {
+      return undefined;
+    }
+    return options.cacheTTL;
+  }
+
+  #initializeBackends(): void {
+    if (this.#options.skipLoading) {
       return;
     }
 
-    const backends = this.options.backends ?? [];
+    const backends = this.#options.backends ?? [];
 
     if (backends.length === 0) {
       throw new Error(
@@ -48,45 +70,48 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     for (const backend of backends) {
-      if (this.backends.has(backend.name)) {
+      if (this.#backends.has(backend.name)) {
         throw new Error(
           `Duplicate backend name: '${backend.name}'. Each backend must have a unique name.`,
         );
       }
-      this.backends.set(backend.name, backend);
-      this.logger.log(`Registered backend: ${backend.name}`);
+      this.#backends.set(backend.name, backend);
+      this.#logger.log(`Registered backend: ${backend.name}`);
     }
 
     if (
-      this.options.defaultBackend &&
-      !this.backends.has(this.options.defaultBackend)
+      this.#options.defaultBackend &&
+      !this.#backends.has(this.#options.defaultBackend)
     ) {
       throw new Error(
-        `defaultBackend '${this.options.defaultBackend}' is not among the configured backends: ${Array.from(this.backends.keys()).join(', ')}`,
+        `defaultBackend '${this.#options.defaultBackend}' is not among the configured backends: ${Array.from(this.#backends.keys()).join(', ')}`,
       );
     }
   }
 
   public async onModuleInit(): Promise<void> {
-    if (this.options.skipLoading || this.options.validateOnStartup === false) {
+    if (
+      this.#options.skipLoading ||
+      this.#options.validateOnStartup === false
+    ) {
       return;
     }
-    await this.validateAllSecrets();
+    await this.#validateAllSecrets();
   }
 
   /**
    * Validate all registered secrets are accessible.
    * Called during application startup if validateOnStartup is enabled.
    */
-  private async validateAllSecrets(): Promise<void> {
+  async #validateAllSecrets(): Promise<void> {
     const secrets = secretRegistry.getAll();
 
     if (secrets.length === 0) {
-      this.logger.log('No secrets registered for validation');
+      this.#logger.log('No secrets registered for validation');
       return;
     }
 
-    this.logger.log(`Validating ${secrets.length} registered secret(s)...`);
+    this.#logger.log(`Validating ${secrets.length} registered secret(s)...`);
 
     const errors: Error[] = [];
 
@@ -97,10 +122,10 @@ export class SecretManagerService implements OnModuleInit {
           version: secret.version,
           backend: secret.backend,
         });
-        this.logger.log(`Secret validated: ${secret.name}`);
+        this.#logger.log(`Secret validated: ${secret.name}`);
       } catch (error) {
         errors.push(error as Error);
-        this.logger.error(`Secret validation failed: ${secret.name}`, error);
+        this.#logger.error(`Secret validation failed: ${secret.name}`, error);
       }
     }
 
@@ -111,7 +136,7 @@ export class SecretManagerService implements OnModuleInit {
       );
     }
 
-    this.logger.log(`All ${secrets.length} secret(s) validated successfully`);
+    this.#logger.log(`All ${secrets.length} secret(s) validated successfully`);
   }
 
   /**
@@ -129,20 +154,20 @@ export class SecretManagerService implements OnModuleInit {
   }): Promise<string> {
     const { name, version, backend: backendName } = options;
 
-    if (this.options.skipLoading) {
+    if (this.#options.skipLoading) {
       return `SECRET_NOT_LOADED:${name}`;
     }
 
-    const backend = this.getBackend(backendName);
+    const backend = this.#getBackend(backendName);
     const resolvedVersion = version ?? 'latest';
 
-    return this.tracer.startActiveSpan('secret.get', async (span) => {
+    return this.#tracer.startActiveSpan('secret.get', async (span) => {
       span.setAttribute('secret.name', name);
       span.setAttribute('secret.version', resolvedVersion);
       span.setAttribute('secret.backend', backend.name);
 
       try {
-        const value = await this.getInternal(name, resolvedVersion, backend);
+        const value = await this.#getInternal(name, resolvedVersion, backend);
         span.setStatus({ code: SpanStatusCode.OK });
         return value;
       } catch (error) {
@@ -158,24 +183,22 @@ export class SecretManagerService implements OnModuleInit {
     });
   }
 
-  private async getInternal(
+  async #getInternal(
     name: string,
     version: string,
     backend: SecretBackend,
   ): Promise<string> {
-    // Check cache first
-    if (this.options.cacheEnabled !== false) {
-      const cached = this.cache.get(backend.name, name, version);
+    if (this.#options.cacheEnabled !== false) {
+      const cached = this.#cache.get(backend.name, name, version);
       if (cached !== undefined) {
-        if (this.options.debug) {
-          this.logger.debug(`Cache hit for secret: ${name}`);
+        if (this.#options.debug) {
+          this.#logger.debug(`Cache hit for secret: ${name}`);
         }
         return cached;
       }
     }
 
-    // Fetch from backend
-    this.logger.log({
+    this.#logger.log({
       msg: 'Fetching secret',
       backend: backend.name,
       name,
@@ -184,9 +207,8 @@ export class SecretManagerService implements OnModuleInit {
 
     const value = await backend.get(name, version);
 
-    // Cache the result
-    if (this.options.cacheEnabled !== false) {
-      this.cache.set(backend.name, name, value, version);
+    if (this.#options.cacheEnabled !== false) {
+      this.#cache.set(backend.name, name, value, version);
     }
 
     return value;
@@ -194,10 +216,6 @@ export class SecretManagerService implements OnModuleInit {
 
   /**
    * Get the latest version of a secret.
-   *
-   * @param options.name - Secret name
-   * @param options.backend - Optional backend name (uses the configured default if omitted)
-   * @returns The secret value
    */
   public async getLatest(options: {
     name: string;
@@ -214,8 +232,8 @@ export class SecretManagerService implements OnModuleInit {
    * Get a backend by name. Falls back to the configured default if no name
    * is given. Throws if the backend isn't configured.
    */
-  private getBackend(name?: string): SecretBackend {
-    const backendName = name ?? this.options.defaultBackend;
+  #getBackend(name?: string): SecretBackend {
+    const backendName = name ?? this.#options.defaultBackend;
 
     if (!backendName) {
       throw new Error(
@@ -224,11 +242,11 @@ export class SecretManagerService implements OnModuleInit {
       );
     }
 
-    const backend = this.backends.get(backendName);
+    const backend = this.#backends.get(backendName);
 
     if (!backend) {
       throw new Error(
-        `Unknown secret backend: '${backendName}'. Available backends: ${Array.from(this.backends.keys()).join(', ')}`,
+        `Unknown secret backend: '${backendName}'. Available backends: ${Array.from(this.#backends.keys()).join(', ')}`,
       );
     }
 
@@ -239,7 +257,17 @@ export class SecretManagerService implements OnModuleInit {
    * Clear the secret cache.
    */
   public clearCache(): void {
-    this.cache.clear();
-    this.logger.log('Secret cache cleared');
+    this.#cache.clear();
+    this.#logger.log('Secret cache cleared');
+  }
+
+  /** Redact when serialized via JSON. */
+  public toJSON(): string {
+    return REDACTED;
+  }
+
+  /** Redact when inspected by util.inspect / console.log / pino / winston. */
+  public [Symbol.for('nodejs.util.inspect.custom')](): string {
+    return REDACTED;
   }
 }

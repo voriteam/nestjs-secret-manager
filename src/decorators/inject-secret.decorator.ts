@@ -4,23 +4,40 @@ import { secretRegistry } from '../constants';
 import { InjectSecretOptions } from '../interfaces/secret-manager-options.interface';
 
 /**
- * Parameter decorator to inject a secret value.
+ * A function that fetches a secret on demand. The value is fetched
+ * cache-first from the configured backend each time the accessor is called.
  *
- * The secret will be fetched from the configured backend during application
- * initialization and injected as a string value.
+ * `@InjectSecret` resolves to a `SecretAccessor` instead of a `string` so
+ * the secret value never has to live as an instance field on the consumer
+ * service. See the **Security considerations** section of the README for
+ * the full rationale.
+ */
+export type SecretAccessor = () => Promise<string>;
+
+/**
+ * Parameter decorator to inject a lazy accessor for a secret.
  *
- * @param name - The secret name/identifier
- * @param options - Optional configuration (version, backend)
+ * Resolves to a `() => Promise<string>` that fetches the secret on demand
+ * (cache-first). Startup validation still applies — the secret is probed at
+ * boot if `validateOnStartup` is enabled — so misconfigured access fails
+ * fast even though no value is stored on the consumer.
  *
  * @example
  * ```typescript
  * @Injectable()
- * class MyService {
+ * export class PartnerClient {
  *   constructor(
- *     @InjectSecret('api-key') private readonly apiKey: string,
- *     @InjectSecret('db-password', { version: '2' }) private readonly dbPassword: string,
- *     @InjectSecret('legacy-key', { backend: 'memory' }) private readonly legacyKey: string,
+ *     @InjectSecret('partner-api-token')
+ *     private readonly getPartnerToken: SecretAccessor,
  *   ) {}
+ *
+ *   async fetchInvoice(invoiceId: string) {
+ *     const token = await this.getPartnerToken();
+ *     return fetch(`https://api.partner.example.com/invoices/${invoiceId}`, {
+ *       headers: { Authorization: `Bearer ${token}` },
+ *     });
+ *     // token goes out of scope here.
+ *   }
  * }
  * ```
  */
@@ -28,9 +45,6 @@ export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  // Register this secret for startup validation and provider creation
   const requirement = secretRegistry.register(name, options);
-
-  // Use NestJS Inject with the unique token
   return Inject(requirement.token);
 }

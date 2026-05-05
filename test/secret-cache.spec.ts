@@ -133,4 +133,32 @@ describe('SecretCache', () => {
       expect(cache.get('gcp', 'api-key')).toBe('value');
     });
   });
+
+  describe('redaction', () => {
+    it('toJSON returns a redacted placeholder', () => {
+      cache.set('gcp', 'api-key', 'super-secret-value');
+      const serialized = JSON.stringify({ cache });
+      expect(serialized).toBe('{"cache":"[SecretCache redacted]"}');
+      expect(serialized).not.toContain('super-secret-value');
+    });
+
+    it('util.inspect.custom hides contents from console.log / loggers', () => {
+      cache.set('gcp', 'api-key', 'super-secret-value');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { inspect } = require('node:util') as typeof import('node:util');
+      const inspected = inspect(cache);
+      expect(inspected).toBe('[SecretCache redacted]');
+      expect(inspected).not.toContain('super-secret-value');
+    });
+
+    it('the underlying cache field is unreachable as a property', () => {
+      cache.set('gcp', 'api-key', 'super-secret-value');
+      // The TS-private `cache` was migrated to a JS `#private` field,
+      // so it isn't visible in Object.keys / for-in / property access.
+      expect(Object.keys(cache)).not.toContain('cache');
+      expect(
+        (cache as unknown as Record<string, unknown>).cache,
+      ).toBeUndefined();
+    });
+  });
 });

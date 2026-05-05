@@ -2,6 +2,7 @@ import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
+import { SecretAccessor } from './decorators/inject-secret.decorator';
 import {
   SecretManagerModuleAsyncOptions,
   SecretManagerModuleOptions,
@@ -119,9 +120,6 @@ export class SecretManagerModule {
   public static forTesting(
     secrets: Record<string, string> = {},
   ): DynamicModule {
-    // Clear registry to avoid pollution between tests
-    secretRegistry.clear();
-
     return this.forRoot({
       defaultBackend: 'memory',
       backends: [new InMemorySecretBackend(secrets)],
@@ -198,20 +196,22 @@ export class SecretManagerModule {
   }
 
   /**
-   * Create providers for all registered secrets.
-   * Each secret gets its own provider that resolves to its value.
+   * Create one accessor provider per registered secret. Each `@InjectSecret`
+   * resolves to a `SecretAccessor` (a `() => Promise<string>`); the value is
+   * fetched on demand and not held on the consumer's instance.
    */
   private static createSecretProviders(): Provider[] {
-    const secrets = secretRegistry.getAll();
+    const requirements = secretRegistry.getAll();
 
-    return secrets.map((secret) => ({
-      provide: secret.token,
-      useFactory: async (service: SecretManagerService): Promise<string> => {
-        return service.get({
-          name: secret.name,
-          version: secret.version,
-          backend: secret.backend,
-        });
+    return requirements.map((requirement) => ({
+      provide: requirement.token,
+      useFactory: (service: SecretManagerService): SecretAccessor => {
+        return () =>
+          service.get({
+            name: requirement.name,
+            version: requirement.version,
+            backend: requirement.backend,
+          });
       },
       inject: [SecretManagerService],
     }));

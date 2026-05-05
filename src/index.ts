@@ -6,10 +6,11 @@ export { SecretManagerService } from './secret-manager.service';
 
 // Decorator
 export { InjectSecret } from './decorators/inject-secret.decorator';
+export type { SecretAccessor } from './decorators/inject-secret.decorator';
 
 // Interfaces
-export { SecretBackend } from './interfaces/secret-backend.interface';
-export {
+export type { SecretBackend } from './interfaces/secret-backend.interface';
+export type {
   SecretManagerModuleOptions,
   SecretManagerModuleAsyncOptions,
   SecretManagerOptionsFactory,
