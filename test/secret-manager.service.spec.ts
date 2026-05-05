@@ -286,4 +286,19 @@ describe('SecretManagerService cacheTTL defaults', () => {
     jest.advanceTimersByTime(24 * 60 * 60 * 1000); // a day
     expect(await service.get({ name: 'api-key' })).toBe('v1');
   });
+
+  it.each([-1, -0.5, NaN, Infinity, -Infinity])(
+    'rejects invalid cacheTTL: %p',
+    (ttl) => {
+      expect(
+        () =>
+          new SecretManagerService({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            validateOnStartup: false,
+            cacheTTL: ttl,
+          }),
+      ).toThrow(/Invalid cacheTTL/);
+    },
+  );
 });

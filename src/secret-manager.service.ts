@@ -53,6 +53,11 @@ export class SecretManagerService implements OnModuleInit {
     if (options.cacheTTL === 0) {
       return undefined;
     }
+    if (!Number.isFinite(options.cacheTTL) || options.cacheTTL < 0) {
+      throw new Error(
+        `Invalid cacheTTL: ${options.cacheTTL}. Must be a non-negative finite number (or 0 / undefined).`,
+      );
+    }
     return options.cacheTTL;
   }
 
