@@ -3,14 +3,24 @@ interface CacheEntry {
   cachedAt: number;
 }
 
+const REDACTED = '[SecretCache redacted]';
+
 /**
  * In-memory cache for secrets.
  * Uses a composite key of backend:name:version for cache entries.
+ *
+ * The internal Map is held as a JS `#private` field so it cannot be reached
+ * via property access on the instance, and `toJSON` / `util.inspect.custom`
+ * are overridden to redact contents in case the cache (or its containing
+ * service) is accidentally serialized by a logger or error reporter.
  */
 export class SecretCache {
-  private readonly cache = new Map<string, CacheEntry>();
+  readonly #cache = new Map<string, CacheEntry>();
+  readonly #ttlMs?: number;
 
-  constructor(private readonly ttlMs?: number) {}
+  constructor(ttlMs?: number) {
+    this.#ttlMs = ttlMs;
+  }
 
   /**
    * Generate a cache key from backend, name, and version.
@@ -22,22 +32,21 @@ export class SecretCache {
   /**
    * Get a cached secret value.
    *
-   * @param backend - Backend name
-   * @param name - Secret name
-   * @param version - Secret version (defaults to 'latest')
-   * @returns The cached value, or undefined if not found or expired
+   * @returns The cached value, or undefined if not found or expired.
    */
   get(backend: string, name: string, version?: string): string | undefined {
     const key = this.getCacheKey(backend, name, version);
-    const entry = this.cache.get(key);
+    const entry = this.#cache.get(key);
 
     if (!entry) {
       return undefined;
     }
 
-    // Check TTL if configured
-    if (this.ttlMs !== undefined && Date.now() - entry.cachedAt > this.ttlMs) {
-      this.cache.delete(key);
+    if (
+      this.#ttlMs !== undefined &&
+      Date.now() - entry.cachedAt > this.#ttlMs
+    ) {
+      this.#cache.delete(key);
       return undefined;
     }
 
@@ -46,27 +55,17 @@ export class SecretCache {
 
   /**
    * Set a cached secret value.
-   *
-   * @param backend - Backend name
-   * @param name - Secret name
-   * @param value - Secret value
-   * @param version - Secret version (defaults to 'latest')
    */
   set(backend: string, name: string, value: string, version?: string): void {
     const key = this.getCacheKey(backend, name, version);
-    this.cache.set(key, {
+    this.#cache.set(key, {
       value,
       cachedAt: Date.now(),
     });
   }
 
   /**
-   * Check if a secret is cached.
-   *
-   * @param backend - Backend name
-   * @param name - Secret name
-   * @param version - Secret version (defaults to 'latest')
-   * @returns True if the secret is cached and not expired
+   * Check if a secret is cached and not expired.
    */
   has(backend: string, name: string, version?: string): boolean {
     return this.get(backend, name, version) !== undefined;
@@ -75,27 +74,34 @@ export class SecretCache {
   /**
    * Delete a specific cached secret.
    *
-   * @param backend - Backend name
-   * @param name - Secret name
-   * @param version - Secret version (defaults to 'latest')
-   * @returns True if the entry was deleted
+   * @returns True if the entry was deleted.
    */
   delete(backend: string, name: string, version?: string): boolean {
     const key = this.getCacheKey(backend, name, version);
-    return this.cache.delete(key);
+    return this.#cache.delete(key);
   }
 
   /**
    * Clear all cached secrets.
    */
   clear(): void {
-    this.cache.clear();
+    this.#cache.clear();
   }
 
   /**
    * Get the number of cached entries.
    */
   get size(): number {
-    return this.cache.size;
+    return this.#cache.size;
+  }
+
+  /** Redact when serialized via JSON. */
+  toJSON(): string {
+    return REDACTED;
+  }
+
+  /** Redact when inspected by util.inspect / console.log / pino / winston. */
+  [Symbol.for('nodejs.util.inspect.custom')](): string {
+    return REDACTED;
   }
 }

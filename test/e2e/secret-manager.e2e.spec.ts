@@ -7,6 +7,7 @@ import {
   SecretManagerModule,
   SecretManagerService,
 } from '../../src';
+import type { SecretAccessor } from '../../src';
 import { secretRegistry } from '../../src/testing';
 
 describe('SecretManagerModule (e2e)', () => {
@@ -243,7 +244,7 @@ describe('SecretManagerModule (e2e)', () => {
       await module.close();
     });
 
-    it('should inject placeholder strings via @InjectSecret', async () => {
+    it('should inject accessor returning placeholder strings via @InjectSecret', async () => {
       // Register the secret before creating the module
       // (normally done at decorator evaluation time)
       secretRegistry.clear();
@@ -251,7 +252,8 @@ describe('SecretManagerModule (e2e)', () => {
       @Injectable()
       class TestService {
         constructor(
-          @InjectSecret('my-api-key') public readonly apiKey: string,
+          @InjectSecret('my-api-key')
+          public readonly getApiKey: SecretAccessor,
         ) {}
       }
 
@@ -261,7 +263,9 @@ describe('SecretManagerModule (e2e)', () => {
       }).compile();
 
       const testService = module.get<TestService>(TestService);
-      expect(testService.apiKey).toBe('SECRET_NOT_LOADED:my-api-key');
+      await expect(testService.getApiKey()).resolves.toBe(
+        'SECRET_NOT_LOADED:my-api-key',
+      );
 
       await module.close();
     });
@@ -285,6 +289,60 @@ describe('SecretManagerModule (e2e)', () => {
       expect(value).toBe('SECRET_NOT_LOADED:any-secret');
 
       await module.close();
+    });
+  });
+
+  describe('@InjectSecret', () => {
+    it('injects a SecretAccessor function (not the raw value)', async () => {
+      @Injectable()
+      class TestService {
+        constructor(
+          @InjectSecret('lazy-key')
+          public readonly getApiKey: SecretAccessor,
+        ) {}
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [SecretManagerModule.forTesting({ 'lazy-key': 'lazy-value' })],
+        providers: [TestService],
+      }).compile();
+
+      const testService = module.get(TestService);
+
+      // The injected member is a function — the secret value is never held
+      // on the instance.
+      expect(typeof testService.getApiKey).toBe('function');
+      expect(testService.getApiKey as unknown as string).not.toBe('lazy-value');
+
+      // Calling it returns the value.
+      await expect(testService.getApiKey()).resolves.toBe('lazy-value');
+
+      await module.close();
+    });
+
+    it('startup validation fails when a secret is missing', async () => {
+      @Injectable()
+      class TestService {
+        constructor(
+          @InjectSecret('does-not-exist')
+          public readonly getMissing: SecretAccessor,
+        ) {}
+      }
+
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            SecretManagerModule.forRoot({
+              defaultBackend: 'memory',
+              backends: [new InMemorySecretBackend()],
+              validateOnStartup: true,
+            }),
+          ],
+          providers: [TestService],
+        })
+          .compile()
+          .then((m) => m.init()),
+      ).rejects.toThrow(/Failed to validate.*does-not-exist/s);
     });
   });
 });

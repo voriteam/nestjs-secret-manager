@@ -126,6 +126,30 @@ describe('SecretManagerService', () => {
       ).rejects.toThrow("Unknown secret backend: 'unknown'");
     });
   });
+
+  describe('redaction', () => {
+    it('toJSON returns a redacted placeholder', async () => {
+      await service.get({ name: 'api-key' });
+      expect(JSON.stringify(service)).toBe('"[SecretManagerService redacted]"');
+    });
+
+    it('util.inspect hides internal state', async () => {
+      await service.get({ name: 'api-key' });
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { inspect } = require('node:util') as typeof import('node:util');
+      const inspected = inspect(service);
+      expect(inspected).toBe('[SecretManagerService redacted]');
+      expect(inspected).not.toContain('test-api-key-value');
+    });
+
+    it('private fields are unreachable as properties', async () => {
+      await service.get({ name: 'api-key' });
+      const visible = Object.keys(service);
+      expect(visible).not.toContain('cache');
+      expect(visible).not.toContain('backends');
+      expect(visible).not.toContain('options');
+    });
+  });
 });
 
 describe('SecretManagerService with validation', () => {
@@ -214,4 +238,67 @@ describe('SecretManagerService without caching', () => {
     const value = await service.get({ name: 'api-key' });
     expect(value).toBe('modified-value');
   });
+});
+
+describe('SecretManagerService cacheTTL defaults', () => {
+  beforeEach(() => {
+    secretRegistry.clear();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    secretRegistry.clear();
+  });
+
+  it('expires entries after the 15 min default when cacheTTL is unset', async () => {
+    const backend = new InMemorySecretBackend({ 'api-key': 'v1' });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      validateOnStartup: false,
+    });
+
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+
+    // Mutate the source. Cache hit means we still see v1.
+    backend.set('api-key', 'v2');
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+
+    // 16 minutes later — past the default 15 min TTL — the cache entry
+    // is expired and we re-fetch from the backend.
+    jest.advanceTimersByTime(16 * 60 * 1000);
+    expect(await service.get({ name: 'api-key' })).toBe('v2');
+  });
+
+  it('treats cacheTTL: 0 as never-expire (escape hatch)', async () => {
+    const backend = new InMemorySecretBackend({ 'api-key': 'v1' });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      validateOnStartup: false,
+      cacheTTL: 0,
+    });
+
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+
+    backend.set('api-key', 'v2');
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000); // a day
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+  });
+
+  it.each([-1, -0.5, NaN, Infinity, -Infinity])(
+    'rejects invalid cacheTTL: %p',
+    (ttl) => {
+      expect(
+        () =>
+          new SecretManagerService({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            validateOnStartup: false,
+            cacheTTL: ttl,
+          }),
+      ).toThrow(/Invalid cacheTTL/);
+    },
+  );
 });

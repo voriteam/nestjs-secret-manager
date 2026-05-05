@@ -17,6 +17,7 @@ export interface SecretRequirement {
   name: string;
   version?: string;
   backend?: string;
+  /** The accessor injection token. */
   token: string;
 }
 
@@ -28,10 +29,15 @@ class SecretRegistry {
   private readonly secrets = new Map<string, SecretRequirement>();
 
   /**
-   * Register a secret requirement.
+   * Register a secret requirement. Idempotent on (name, version, backend).
    */
   register(name: string, options?: InjectSecretOptions): SecretRequirement {
     const token = getSecretToken(name, options);
+    const existing = this.secrets.get(token);
+    if (existing) {
+      return existing;
+    }
+
     const requirement: SecretRequirement = {
       name,
       version: options?.version,
