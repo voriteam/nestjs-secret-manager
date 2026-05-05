@@ -29,8 +29,13 @@ export interface SecretManagerModuleOptions {
   cacheEnabled?: boolean;
 
   /**
-   * Cache TTL in milliseconds.
-   * If not set, secrets are cached indefinitely within the process lifetime.
+   * Cache TTL in milliseconds. Secrets older than this are re-fetched on the
+   * next access, bounding rotation lag and the steady-state in-memory
+   * footprint.
+   *
+   * - Unset (`undefined`) → 15 minutes (`15 * 60 * 1000`).
+   * - `0` → never expire (process-lifetime cache; explicit escape hatch).
+   * - Positive number → milliseconds.
    */
   cacheTTL?: number;
 

@@ -1,6 +1,7 @@
 # @vori/nestjs-secret-manager
 
-A NestJS module for accessing secrets via dependency injection, with startup validation, in-memory caching, and pluggable backends.
+A NestJS module for accessing secrets via dependency injection, with startup validation, in-memory caching, and
+pluggable backends.
 
 ## Why use this?
 
@@ -8,15 +9,19 @@ We created this package to solve a few repeated issues:
 
 **IAM misconfiguration**
 
-Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations surfaced at runtime instead of sooner. This module solves this by verifying that all registered secrets are accessible at startup. Inaccessible secrets fail startup, which prevents misconfigurations from entering production.
+Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations
+surfaced at runtime instead of sooner. This module solves this by verifying that all registered secrets are accessible
+at startup. Inaccessible secrets fail startup, which prevents misconfigurations from entering production.
 
 **Repeated loading**
 
-Some of our secrets are accessed frequently, especially at startup time. These repeated accesses are now cached in memory, reducing overall latency to retrieve secrets.
+Some of our secrets are accessed frequently, especially at startup time. These repeated accesses are now cached in
+memory, reducing overall latency to retrieve secrets.
 
 **Usage tracking**
 
-"Is this secret actually used?" We can now more definitively answer this question via telemetry—spans for each secret access—and dependency injection (e.g., tracing the dependency map).
+"Is this secret actually used?" We can now more definitively answer this question via telemetry—spans for each secret
+access—and dependency injection (e.g., tracing the dependency map).
 
 ## Features
 
@@ -25,7 +30,8 @@ Some of our secrets are accessed frequently, especially at startup time. These r
 - **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
 - **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
 - **Custom backends** — extend via the `SecretBackend` interface
-- **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend` attributes
+- **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend`
+  attributes
 - **Global module** — register once in `AppModule`, available everywhere without re-importing
 
 ## Requirements
@@ -45,7 +51,7 @@ pnpm add @vori/nestjs-secret-manager
 
 ```typescript
 // app.module.ts
-import { Module } from '@nestjs/common';
+import {Module} from '@nestjs/common';
 import {
   GcpSecretManagerBackend,
   SecretManagerModule,
@@ -60,28 +66,43 @@ import {
     }),
   ],
 })
-export class AppModule {}
+export class AppModule {
+}
 ```
 
-Each backend is responsible for its own configuration — the module itself is agnostic to which backends exist. Add as many as you need; `defaultBackend` selects the one used when `@InjectSecret` doesn't specify a backend.
+Each backend is responsible for its own configuration — the module itself is agnostic to which backends exist. Add as
+many as you need; `defaultBackend` selects the one used when `@InjectSecret` doesn't specify a backend.
 
 ### 2. Inject secrets into services
 
 ```typescript
 // my.service.ts
 import { Injectable } from '@nestjs/common';
-import { InjectSecret } from '@vori/nestjs-secret-manager';
+import {
+  InjectSecret,
+  type SecretAccessor,
+} from '@vori/nestjs-secret-manager';
 
 @Injectable()
 export class MyService {
   constructor(
-    @InjectSecret('api-key') private readonly apiKey: string,
-    @InjectSecret('db-password', { version: '2' }) private readonly dbPassword: string,
+    @InjectSecret('api-key')
+    private readonly getApiKey: SecretAccessor,
+    @InjectSecret('db-password', { version: '2' })
+    private readonly getDbPassword: SecretAccessor,
   ) {}
+
+  async loadConfig() {
+    const apiKey = await this.getApiKey();
+    const dbPassword = await this.getDbPassword();
+    // …use here; the values fall out of scope when this method returns.
+  }
 }
 ```
 
-Secrets are fetched during application initialization and injected as plain strings. If `validateOnStartup` is enabled (the default), the application will refuse to start if any registered secret cannot be fetched.
+`@InjectSecret` resolves to a `SecretAccessor` (`() => Promise<string>`) — calling it fetches the value cache-first from the configured backend. The secret value is **never stored on the consumer's instance**; see [Security considerations](#security-considerations) for why this is the only injection mode.
+
+If `validateOnStartup` is enabled (the default), the application refuses to start when any registered secret can't be fetched, so misconfigured access fails at boot rather than at first call.
 
 ## Configuration
 
@@ -102,7 +123,7 @@ SecretManagerModule.forRoot({
   // Required (unless skipLoading): backends available for resolution.
   backends: [
     new GcpSecretManagerBackend('my-project'),
-    new InMemorySecretBackend({ 'local-secret': 'local-value' }),
+    new InMemorySecretBackend({'local-secret': 'local-value'}),
   ],
 
   // Fail startup if any registered secret is inaccessible (default: true)
@@ -111,7 +132,9 @@ SecretManagerModule.forRoot({
   // Enable in-memory caching (default: true)
   cacheEnabled: true,
 
-  // Cache TTL in milliseconds; omit to cache for the lifetime of the process
+  // Cache TTL in milliseconds. Defaults to 15 minutes when unset; bounds
+  // staleness and rotation lag. Set to `0` to cache for the lifetime of
+  // the process (explicit escape hatch).
   cacheTTL: 60_000,
 
   // Enable verbose debug logging for cache hits (default: false)
@@ -150,21 +173,57 @@ SecretManagerModule.forRootAsync({
 @InjectSecret('secret-name', { backend: 'memory' })
 ```
 
+### Why `@InjectSecret` returns a function, not a string
+
+A common pattern in DI containers is to inject the resolved secret directly:
+
+```typescript
+// NOT how this library works
+constructor(@InjectSecret('api-key') private readonly apiKey: string) {}
+```
+
+That stores the secret as an instance field for the lifetime of the service. NestJS providers are singletons, so the value pins to the heap until the process exits. Worse, anything that serializes the service — a Sentry breadcrumb, a structured log line, an exception filter dumping `this`, a debugger inspector — can leak it.
+
+This library deliberately offers no `string`-typed mode. `@InjectSecret` always resolves to a `SecretAccessor`:
+
+```typescript
+@Injectable()
+export class PartnerClient {
+  constructor(
+    @InjectSecret('partner-api-token')
+    private readonly getPartnerToken: SecretAccessor,
+  ) {}
+
+  async fetchInvoice(invoiceId: string) {
+    const token = await this.getPartnerToken();
+    return fetch(`https://api.partner.example.com/invoices/${invoiceId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    // token goes out of scope here — no instance field, nothing to leak.
+  }
+}
+```
+
+The cost is one `await` per call site. The benefit is that the consumer instance never holds the value, and the cache is the only long-lived copy in memory (and that's redacted from `JSON.stringify` and `util.inspect` — see [Security considerations](#security-considerations)).
+
+If you genuinely need the string at constructor time (e.g., some sync third-party client that won't accept a deferred token), defer the construction itself: resolve the accessor in `onModuleInit` and store the resulting *client*, not the *secret*.
+
 ## Programmatic access
 
 Inject `SecretManagerService` directly when you need runtime secret lookups:
 
 ```typescript
-import { Injectable } from '@nestjs/common';
-import { SecretManagerService } from '@vori/nestjs-secret-manager';
+import {Injectable} from '@nestjs/common';
+import {SecretManagerService} from '@vori/nestjs-secret-manager';
 
 @Injectable()
 export class MyService {
-  constructor(private readonly secrets: SecretManagerService) {}
+  constructor(private readonly secrets: SecretManagerService) {
+  }
 
   async getConnectionString() {
     // Fetch the latest version
-    return this.secrets.get({ name: 'db-connection-string' });
+    return this.secrets.get({name: 'db-connection-string'});
 
     // Fetch a specific version
     // return this.secrets.get({ name: 'db-connection-string', version: '3' });
@@ -177,19 +236,20 @@ export class MyService {
 
 ### Additional service methods
 
-| Method | Description |
-| --- | --- |
+| Method                              | Description                                                                       |
+|-------------------------------------|-----------------------------------------------------------------------------------|
 | `get({ name, version?, backend? })` | Fetch a secret; defaults to `'latest'` version and the configured default backend |
-| `getLatest({ name, backend? })` | Alias for `get({ name, version: 'latest', backend })` |
-| `clearCache()` | Flush all cached entries |
+| `getLatest({ name, backend? })`     | Alias for `get({ name, version: 'latest', backend })`                             |
+| `clearCache()`                      | Flush all cached entries                                                          |
 
 ## Testing
 
-`forTesting` configures the module with the in-memory backend and disables startup validation, making test setup lightweight:
+`forTesting` configures the module with the in-memory backend and disables startup validation, making test setup
+lightweight:
 
 ```typescript
-import { Test } from '@nestjs/testing';
-import { SecretManagerModule } from '@vori/nestjs-secret-manager';
+import {Test} from '@nestjs/testing';
+import {SecretManagerModule} from '@vori/nestjs-secret-manager';
 
 describe('MyService', () => {
   let service: MyService;
@@ -229,7 +289,8 @@ import {
 class VaultBackend implements SecretBackend {
   readonly name = 'vault';
 
-  constructor(private readonly options: { url: string; token: string }) {}
+  constructor(private readonly options: { url: string; token: string }) {
+  }
 
   async get(name: string, version?: string): Promise<string> {
     // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
@@ -243,15 +304,16 @@ class VaultBackend implements SecretBackend {
 SecretManagerModule.forRoot({
   defaultBackend: 'vault',
   backends: [
-    new VaultBackend({ url: 'https://vault.example.com', token: '...' }),
+    new VaultBackend({url: 'https://vault.example.com', token: '...'}),
   ],
 });
 
 // Then use via decorator or service
-@InjectSecret('my-secret', { backend: 'vault' })
+@InjectSecret('my-secret', {backend: 'vault'})
 ```
 
-If your backend needs DI-resolved configuration (e.g., from `ConfigService`), use `forRootAsync` and construct the backend inside the factory:
+If your backend needs DI-resolved configuration (e.g., from `ConfigService`), use `forRootAsync` and construct the
+backend inside the factory:
 
 ```typescript
 SecretManagerModule.forRootAsync({
@@ -280,7 +342,7 @@ import {
 } from '@vori/nestjs-secret-manager';
 
 try {
-  await secrets.get({ name: 'my-secret' });
+  await secrets.get({name: 'my-secret'});
 } catch (error) {
   if (error instanceof SecretNotFoundError) {
     // error.secretName, error.backend, error.version
@@ -294,14 +356,41 @@ try {
 
 Here is how Google Secret Manager gRPC statuses are mapped:
 
-| gRPC status | Code | Error thrown |
-| --- | --- | --- |
-| `NOT_FOUND` | 5 | `SecretNotFoundError` |
-| `PERMISSION_DENIED` | 7 | `SecretAccessDeniedError` |
+| gRPC status         | Code | Error thrown              |
+|---------------------|------|---------------------------|
+| `NOT_FOUND`         | 5    | `SecretNotFoundError`     |
+| `PERMISSION_DENIED` | 7    | `SecretAccessDeniedError` |
+
+## Security considerations
+
+This module fetches secrets from a backend and holds them in process memory. The substrate is no different from a
+hand-rolled `accessSecretVersion` call — once a value reaches Node, it lives on the V8 heap as an immutable string until
+it's collected. But because secrets are centralized here, the threat profile is worth being explicit about.
+
+### Threat model
+
+| Risk                                                                                                                   | Mitigation in this module                                                                                                                                                                                                                     |
+|------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Accidental serialization.** A logger or error reporter dumps a service that holds the cache.                         | `SecretManagerService` and `SecretCache` both override `toJSON()` and `util.inspect.custom` to return `[…  redacted]`. Internal state is held in JS `#private` fields, so it's unreachable via `Object.keys`, property access, or reflection. |
+| **Long-lived service fields.** A constructor parameter typed `string` would keep the value pinned for the process lifetime. | `@InjectSecret` only resolves to a `SecretAccessor` (`() => Promise<string>`); there is no string-typed injection mode. Consumers fetch on demand and the value falls out of scope. |
+| **Indefinite caching / rotation lag.** A rotated or revoked secret stays valid in the running process forever.         | `cacheTTL` defaults to **15 minutes**. Set explicitly to bound staleness more tightly, or to `0` to opt back into "cache forever."                                                                                                            |
+| **Heap dumps.** A heap snapshot exposes every live string.                                                             | The `#private` fields make secrets harder to find via well-known property paths, but V8 strings can't be zeroed — there is no fix at this layer. Consider whether your hosting environment's diagnostics export heap dumps to third parties.  |
+
+### What this module does *not* do
+
+- **Memory zeroing.** V8 strings are immutable; secrets remain on the heap until GC reclaims them. There is no portable
+  workaround.
+- **Background rotation.** The cache expires entries on read, not via a refresh loop. Long-running services that fetch a
+  secret rarely will see it stay cached for the full TTL.
+- **Exception filtering.** If you `throw error.with(secretValue)` (or include a secret in any error message yourself),
+  this module won't redact it. Don't pass secret values into error constructors.
 
 ## GCP authentication
 
-The GCP backend uses [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials). No explicit credential configuration is required when running on GCP (Cloud Run, GKE, etc.). For local development, authenticate with:
+The GCP backend
+uses [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials).
+No explicit credential configuration is required when running on GCP (Cloud Run, GKE, etc.). For local development,
+authenticate with:
 
 ```bash
 gcloud auth application-default login
@@ -311,10 +400,10 @@ gcloud auth application-default login
 
 Every secret fetch creates a `secret.get` span with the following attributes:
 
-| Attribute | Description |
-| --- | --- |
-| `secret.name` | The name of the secret |
-| `secret.version` | The resolved version (e.g. `latest` or `3`) |
-| `secret.backend` | The backend used (e.g. `gcp`, `memory`) |
+| Attribute        | Description                                  |
+|------------------|----------------------------------------------|
+| `secret.name`    | The name of the secret                       |
+| `secret.version` | The resolved version (e.g., `latest` or `3`) |
+| `secret.backend` | The backend used (e.g., `gcp`, `memory`)     |
 
 Errors are recorded on the span and the span status is set to `ERROR`.
