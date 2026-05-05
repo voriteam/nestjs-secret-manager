@@ -10,8 +10,10 @@ We created this package to solve a few repeated issues:
 **IAM misconfiguration**
 
 Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations
-surfaced at runtime instead of sooner. This module solves this by verifying that all registered secrets are accessible
-at startup. Inaccessible secrets fail startup, which prevents misconfigurations from entering production.
+surfaced at runtime instead of sooner. This module mitigates that by probing every secret declared via `@InjectSecret`
+at boot — inaccessible secrets fail startup, which prevents misconfigurations from entering production. Secrets fetched
+only via `service.get(...)` (without a corresponding decorator) fall outside this guarantee; see
+[Startup validation scope](#startup-validation-scope) for the full caveat.
 
 **Repeated loading**
 
@@ -102,7 +104,7 @@ export class MyService {
 
 `@InjectSecret` resolves to a `SecretAccessor` (`() => Promise<string>`) — calling it fetches the value cache-first from the configured backend. The secret value is **never stored on the consumer's instance**; see [Security considerations](#security-considerations) for why this is the only injection mode.
 
-If `validateOnStartup` is enabled (the default), the application refuses to start when any registered secret can't be fetched, so misconfigured access fails at boot rather than at first call.
+If `validateOnStartup` is enabled (the default), the application refuses to start when any registered secret can't be fetched, so misconfigured access fails at boot rather than at first call. **Only secrets declared via `@InjectSecret` are probed** — see [Startup validation scope](#startup-validation-scope) for what this excludes.
 
 ## Configuration
 
@@ -241,6 +243,20 @@ export class MyService {
 | `get({ name, version?, backend? })` | Fetch a secret; defaults to `'latest'` version and the configured default backend |
 | `getLatest({ name, backend? })`     | Alias for `get({ name, version: 'latest', backend })`                             |
 | `clearCache()`                      | Flush all cached entries                                                          |
+
+### Startup validation scope
+
+Startup validation iterates the secrets registered by the `@InjectSecret` decorator and probes each one against its
+backend. **Secrets accessed only via `service.get(...)` are not registered** — they're invisible to the validator and
+their access permissions won't be checked at boot. A typo in a name, a missing IAM grant, or a deleted secret will
+surface at the first runtime call instead.
+
+Rule of thumb: if the secret name is known at compile time, use `@InjectSecret('name')` and you get validation for
+free. Reach for `service.get(...)` only when the name is genuinely computed at runtime (per-tenant, per-request,
+selected from config) — those names are not knowable at boot, so per-secret validation isn't possible regardless of
+the API. This is a deliberate scope decision; the package does not ship a side-channel "extra secrets to validate"
+list because maintaining it parallel to the call sites is exactly the rot the decorator-based approach was designed
+to avoid.
 
 ## Testing
 
