@@ -45,6 +45,47 @@ export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options);
+  const requirement = secretRegistry.register(name, options, 'string');
+  return Inject(requirement.token);
+}
+
+/**
+ * A function that fetches a secret on demand and returns the raw bytes,
+ * bypassing UTF-8 decoding. Use this for binary secrets such as private
+ * keys, encryption keys, or signed binary blobs where decoding to a string
+ * would be lossy.
+ */
+export type SecretBytesAccessor = () => Promise<Uint8Array>;
+
+/**
+ * Parameter decorator to inject a lazy accessor that returns a secret as
+ * raw bytes (`Uint8Array`).
+ *
+ * Mirrors `@InjectSecret` in every other respect — the value is fetched
+ * cache-first on each call and never lives as an instance field on the
+ * consumer. Use this instead of `@InjectSecret` when the secret payload is
+ * binary (e.g. PEM/DER private keys, AEAD keys, packed credential blobs).
+ *
+ * @example
+ * ```typescript
+ * @Injectable()
+ * export class TokenSigner {
+ *   constructor(
+ *     @InjectSecretBytes('signing-key')
+ *     private readonly getSigningKey: SecretBytesAccessor,
+ *   ) {}
+ *
+ *   async sign(payload: Uint8Array) {
+ *     const key = await this.getSigningKey();
+ *     // …use the key bytes (e.g. crypto.subtle.importKey(...))
+ *   }
+ * }
+ * ```
+ */
+export function InjectSecretBytes(
+  name: string,
+  options?: InjectSecretOptions,
+): ParameterDecorator {
+  const requirement = secretRegistry.register(name, options, 'bytes');
   return Inject(requirement.token);
 }

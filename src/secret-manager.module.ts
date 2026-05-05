@@ -2,7 +2,10 @@ import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
-import { SecretAccessor } from './decorators/inject-secret.decorator';
+import {
+  SecretAccessor,
+  SecretBytesAccessor,
+} from './decorators/inject-secret.decorator';
 import {
   SecretManagerModuleAsyncOptions,
   SecretManagerModuleOptions,
@@ -196,24 +199,42 @@ export class SecretManagerModule {
   }
 
   /**
-   * Create one accessor provider per registered secret. Each `@InjectSecret`
-   * resolves to a `SecretAccessor` (a `() => Promise<string>`); the value is
-   * fetched on demand and not held on the consumer's instance.
+   * Create one accessor provider per registered secret.
+   *
+   * `@InjectSecret` registrations get a `SecretAccessor` (`() => Promise<string>`),
+   * `@InjectSecretBytes` registrations get a `SecretBytesAccessor`
+   * (`() => Promise<Uint8Array>`). The value is fetched on demand and not
+   * held on the consumer's instance.
    */
   private static createSecretProviders(): Provider[] {
     const requirements = secretRegistry.getAll();
 
-    return requirements.map((requirement) => ({
-      provide: requirement.token,
-      useFactory: (service: SecretManagerService): SecretAccessor => {
-        return () =>
-          service.get({
-            name: requirement.name,
-            version: requirement.version,
-            backend: requirement.backend,
-          });
-      },
-      inject: [SecretManagerService],
-    }));
+    return requirements.map((requirement) => {
+      const fetchOptions = {
+        name: requirement.name,
+        version: requirement.version,
+        backend: requirement.backend,
+      };
+
+      if (requirement.kind === 'bytes') {
+        return {
+          provide: requirement.token,
+          useFactory:
+            (service: SecretManagerService): SecretBytesAccessor =>
+            () =>
+              service.getBytes(fetchOptions),
+          inject: [SecretManagerService],
+        };
+      }
+
+      return {
+        provide: requirement.token,
+        useFactory:
+          (service: SecretManagerService): SecretAccessor =>
+          () =>
+            service.get(fetchOptions),
+        inject: [SecretManagerService],
+      };
+    });
   }
 }
