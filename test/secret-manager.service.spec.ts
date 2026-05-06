@@ -80,6 +80,61 @@ describe('SecretManagerService', () => {
     });
   });
 
+  describe('getBytes', () => {
+    it('returns UTF-8 bytes for string-stored secrets', async () => {
+      const bytes = await service.getBytes({ name: 'api-key' });
+      expect(new TextDecoder().decode(bytes)).toBe('test-api-key-value');
+    });
+
+    it('preserves non-UTF-8 binary payloads', async () => {
+      const binary = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff]);
+      memoryBackend.set('signing-key', binary);
+      expect(await service.getBytes({ name: 'signing-key' })).toEqual(binary);
+    });
+
+    it('caches the bytes view independently of the string view', async () => {
+      // First fetch primes the bytes cache.
+      await service.getBytes({ name: 'api-key' });
+
+      // Mutate the underlying backend; cached bytes should still win.
+      memoryBackend.set('api-key', 'mutated');
+      const bytes = await service.getBytes({ name: 'api-key' });
+      expect(new TextDecoder().decode(bytes)).toBe('test-api-key-value');
+    });
+
+    it('clearCache flushes both views', async () => {
+      await service.get({ name: 'api-key' });
+      await service.getBytes({ name: 'api-key' });
+      memoryBackend.set('api-key', 'fresh');
+      service.clearCache();
+
+      expect(await service.get({ name: 'api-key' })).toBe('fresh');
+      expect(
+        new TextDecoder().decode(await service.getBytes({ name: 'api-key' })),
+      ).toBe('fresh');
+    });
+
+    it('throws SecretNotFoundError for missing bytes', async () => {
+      await expect(service.getBytes({ name: 'nope' })).rejects.toThrow(
+        SecretNotFoundError,
+      );
+    });
+
+    it('getLatestBytes resolves the latest version', async () => {
+      memoryBackend.set('api-key', 'v1', '1');
+      memoryBackend.set('api-key', 'v2');
+      const bytes = await service.getLatestBytes({ name: 'api-key' });
+      expect(new TextDecoder().decode(bytes)).toBe('v2');
+    });
+
+    it('mutating returned bytes does not corrupt the cache', async () => {
+      const first = await service.getBytes({ name: 'api-key' });
+      first.fill(0); // attempt to corrupt
+      const second = await service.getBytes({ name: 'api-key' });
+      expect(new TextDecoder().decode(second)).toBe('test-api-key-value');
+    });
+  });
+
   describe('getLatest', () => {
     it('should retrieve the latest version of a secret', async () => {
       const value = await service.getLatest({ name: 'api-key' });
@@ -193,6 +248,36 @@ describe('SecretManagerService with validation', () => {
 
     await expect(service.onModuleInit()).rejects.toThrow(
       /Failed to validate 1 secret[\s\S]*missing-secret/,
+    );
+  });
+
+  it('validates bytes-kind requirements via getBytes', async () => {
+    secretRegistry.register('binary-secret', undefined, 'bytes');
+
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [
+        new InMemorySecretBackend({
+          'binary-secret': new Uint8Array([0xff, 0x01]),
+        }),
+      ],
+      validateOnStartup: true,
+    });
+
+    await expect(service.onModuleInit()).resolves.not.toThrow();
+  });
+
+  it('fails startup when a bytes-kind requirement is missing', async () => {
+    secretRegistry.register('missing-bytes', undefined, 'bytes');
+
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [new InMemorySecretBackend()],
+      validateOnStartup: true,
+    });
+
+    await expect(service.onModuleInit()).rejects.toThrow(
+      /Failed to validate 1 secret[\s\S]*missing-bytes/,
     );
   });
 });

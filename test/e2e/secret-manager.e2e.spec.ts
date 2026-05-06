@@ -4,10 +4,11 @@ import { Test } from '@nestjs/testing';
 import {
   InMemorySecretBackend,
   InjectSecret,
+  InjectSecretBytes,
   SecretManagerModule,
   SecretManagerService,
 } from '../../src';
-import type { SecretAccessor } from '../../src';
+import type { SecretAccessor, SecretBytesAccessor } from '../../src';
 import { secretRegistry } from '../../src/testing';
 
 describe('SecretManagerModule (e2e)', () => {
@@ -343,6 +344,86 @@ describe('SecretManagerModule (e2e)', () => {
           .compile()
           .then((m) => m.init()),
       ).rejects.toThrow(/Failed to validate.*does-not-exist/s);
+    });
+  });
+
+  describe('@InjectSecretBytes', () => {
+    it('injects a SecretBytesAccessor that returns Uint8Array', async () => {
+      @Injectable()
+      class TestService {
+        constructor(
+          @InjectSecretBytes('signing-key')
+          public readonly getSigningKey: SecretBytesAccessor,
+        ) {}
+      }
+
+      const binary = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      const memoryBackend = new InMemorySecretBackend();
+      memoryBackend.set('signing-key', binary);
+
+      const module = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [memoryBackend],
+            validateOnStartup: false,
+            cacheEnabled: false,
+          }),
+        ],
+        providers: [TestService],
+      }).compile();
+
+      const testService = module.get(TestService);
+      expect(typeof testService.getSigningKey).toBe('function');
+      const bytes = await testService.getSigningKey();
+      expect(bytes).toEqual(binary);
+
+      await module.close();
+    });
+
+    it('coexists with @InjectSecret on the same secret name', async () => {
+      @Injectable()
+      class TestService {
+        constructor(
+          @InjectSecret('shared')
+          public readonly getStr: SecretAccessor,
+          @InjectSecretBytes('shared')
+          public readonly getBytes: SecretBytesAccessor,
+        ) {}
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [SecretManagerModule.forTesting({ shared: 'hello' })],
+        providers: [TestService],
+      }).compile();
+
+      const testService = module.get(TestService);
+      await expect(testService.getStr()).resolves.toBe('hello');
+      const bytes = await testService.getBytes();
+      expect(new TextDecoder().decode(bytes)).toBe('hello');
+
+      await module.close();
+    });
+
+    it('returns a placeholder under skipLoading', async () => {
+      @Injectable()
+      class TestService {
+        constructor(
+          @InjectSecretBytes('any-key')
+          public readonly getKey: SecretBytesAccessor,
+        ) {}
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [SecretManagerModule.forSkipLoading()],
+        providers: [TestService],
+      }).compile();
+
+      const testService = module.get(TestService);
+      const bytes = await testService.getKey();
+      expect(new TextDecoder().decode(bytes)).toBe('SECRET_NOT_LOADED:any-key');
+
+      await module.close();
     });
   });
 });

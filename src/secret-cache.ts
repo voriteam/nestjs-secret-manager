@@ -1,5 +1,5 @@
-interface CacheEntry {
-  value: string;
+interface CacheEntry<T> {
+  value: T;
   cachedAt: number;
 }
 
@@ -14,8 +14,8 @@ const REDACTED = '[SecretCache redacted]';
  * are overridden to redact contents in case the cache (or its containing
  * service) is accidentally serialized by a logger or error reporter.
  */
-export class SecretCache {
-  readonly #cache = new Map<string, CacheEntry>();
+export class SecretCache<T = string> {
+  readonly #cache = new Map<string, CacheEntry<T>>();
   readonly #ttlMs?: number;
 
   constructor(ttlMs?: number) {
@@ -34,7 +34,7 @@ export class SecretCache {
    *
    * @returns The cached value, or undefined if not found or expired.
    */
-  get(backend: string, name: string, version?: string): string | undefined {
+  get(backend: string, name: string, version?: string): T | undefined {
     const key = this.getCacheKey(backend, name, version);
     const entry = this.#cache.get(key);
 
@@ -56,7 +56,7 @@ export class SecretCache {
   /**
    * Set a cached secret value.
    */
-  set(backend: string, name: string, value: string, version?: string): void {
+  set(backend: string, name: string, value: T, version?: string): void {
     const key = this.getCacheKey(backend, name, version);
     this.#cache.set(key, {
       value,

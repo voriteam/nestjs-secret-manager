@@ -30,4 +30,22 @@ export interface SecretBackend {
    * @returns The secret value as a string
    */
   getLatest(name: string): Promise<string>;
+
+  /**
+   * Fetch a secret as raw bytes. Use this for binary secrets (e.g.,
+   * private keys, encryption material) where UTF-8 decoding would be lossy.
+   *
+   * @param name - The secret name/identifier
+   * @param version - Optional version (defaults to 'latest')
+   * @returns The secret value as a Uint8Array
+   * @throws SecretNotFoundError if the secret doesn't exist
+   * @throws SecretAccessDeniedError if access is denied
+   */
+  getBytes(name: string, version?: string): Promise<Uint8Array>;
+
+  /**
+   * Fetch the latest version of a secret as raw bytes.
+   * Convenience method equivalent to `getBytes(name, 'latest')`.
+   */
+  getLatestBytes(name: string): Promise<Uint8Array>;
 }

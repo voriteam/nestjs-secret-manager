@@ -20,10 +20,12 @@ export class GcpSecretManagerBackend implements SecretBackend {
     this.client = new SecretManagerServiceClient({ projectId });
   }
 
-  async get(name: string, version?: string): Promise<string> {
+  private async fetchPayload(
+    name: string,
+    version?: string,
+  ): Promise<Buffer | Uint8Array | string> {
     const versionId = version ?? 'latest';
     const secretPath = `projects/${this.projectId}/secrets/${name}/versions/${versionId}`;
-    let payload;
 
     try {
       this.logger.debug(
@@ -34,14 +36,24 @@ export class GcpSecretManagerBackend implements SecretBackend {
         name: secretPath,
       });
 
-      payload = response.payload?.data;
+      const payload = response.payload?.data;
+
+      // Distinguish "absent" from "empty" — an empty string/buffer is a
+      // legitimate (if unusual) secret payload and must not be reported as
+      // missing.
+      if (payload == null) {
+        throw new SecretNotFoundError(name, this.name, version);
+      }
+
+      return payload;
     } catch (error: unknown) {
-      // Handle gRPC errors from GCP
+      if (error instanceof SecretNotFoundError) {
+        throw error;
+      }
+
+      // gRPC status codes: 5 = NOT_FOUND, 7 = PERMISSION_DENIED
       const grpcError = error as { code?: number; message?: string };
 
-      // gRPC status codes:
-      // 5 = NOT_FOUND
-      // 7 = PERMISSION_DENIED
       if (grpcError.code === 5) {
         throw new SecretNotFoundError(name, this.name, version);
       }
@@ -50,28 +62,35 @@ export class GcpSecretManagerBackend implements SecretBackend {
         throw new SecretAccessDeniedError(name, this.name, grpcError.message);
       }
 
-      // Log and re-throw unexpected errors
       this.logger.error(
         `Unexpected error fetching secret '${name}': ${grpcError.message}`,
         error,
       );
       throw error;
     }
+  }
 
-    if (!payload) {
-      throw new SecretNotFoundError(name, this.name, version);
-    }
-
-    // Handle both Buffer and Uint8Array
-    const value =
-      typeof payload === 'string'
-        ? payload
-        : Buffer.from(payload).toString('utf-8');
-
-    return value;
+  async get(name: string, version?: string): Promise<string> {
+    const payload = await this.fetchPayload(name, version);
+    return typeof payload === 'string'
+      ? payload
+      : Buffer.from(payload).toString('utf-8');
   }
 
   async getLatest(name: string): Promise<string> {
     return this.get(name, 'latest');
+  }
+
+  async getBytes(name: string, version?: string): Promise<Uint8Array> {
+    const payload = await this.fetchPayload(name, version);
+    if (typeof payload === 'string') {
+      return new TextEncoder().encode(payload);
+    }
+    // Buffer is already a Uint8Array; return without re-allocation.
+    return payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  }
+
+  async getLatestBytes(name: string): Promise<Uint8Array> {
+    return this.getBytes(name, 'latest');
   }
 }

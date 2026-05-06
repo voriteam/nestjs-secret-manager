@@ -30,7 +30,8 @@ const REDACTED = '[SecretManagerService redacted]';
 export class SecretManagerService implements OnModuleInit {
   readonly #logger = new Logger(SecretManagerService.name);
   readonly #backends = new Map<string, SecretBackend>();
-  readonly #cache: SecretCache;
+  readonly #stringCache: SecretCache<string>;
+  readonly #bytesCache: SecretCache<Uint8Array>;
   readonly #tracer: Tracer = trace.getTracer('secret-manager');
   readonly #options: SecretManagerModuleOptions;
 
@@ -38,7 +39,9 @@ export class SecretManagerService implements OnModuleInit {
     @Inject(SECRET_MANAGER_OPTIONS) options: SecretManagerModuleOptions,
   ) {
     this.#options = options;
-    this.#cache = new SecretCache(this.#resolveCacheTtl(options));
+    const ttl = this.#resolveCacheTtl(options);
+    this.#stringCache = new SecretCache<string>(ttl);
+    this.#bytesCache = new SecretCache<Uint8Array>(ttl);
     this.#initializeBackends();
   }
 
@@ -122,11 +125,23 @@ export class SecretManagerService implements OnModuleInit {
 
     for (const secret of secrets) {
       try {
-        await this.get({
-          name: secret.name,
-          version: secret.version,
-          backend: secret.backend,
-        });
+        // Use the same kind of fetch the consumer registered with — for
+        // truly binary secrets, decoding to UTF-8 silently substitutes
+        // replacement characters but doesn't throw, so probing via the
+        // matching method gives the most accurate validation.
+        if (secret.kind === 'bytes') {
+          await this.getBytes({
+            name: secret.name,
+            version: secret.version,
+            backend: secret.backend,
+          });
+        } else {
+          await this.get({
+            name: secret.name,
+            version: secret.version,
+            backend: secret.backend,
+          });
+        }
         this.#logger.log(`Secret validated: ${secret.name}`);
       } catch (error) {
         errors.push(error as Error);
@@ -194,7 +209,7 @@ export class SecretManagerService implements OnModuleInit {
     backend: SecretBackend,
   ): Promise<string> {
     if (this.#options.cacheEnabled !== false) {
-      const cached = this.#cache.get(backend.name, name, version);
+      const cached = this.#stringCache.get(backend.name, name, version);
       if (cached !== undefined) {
         if (this.#options.debug) {
           this.#logger.debug(`Cache hit for secret: ${name}`);
@@ -213,7 +228,7 @@ export class SecretManagerService implements OnModuleInit {
     const value = await backend.get(name, version);
 
     if (this.#options.cacheEnabled !== false) {
-      this.#cache.set(backend.name, name, value, version);
+      this.#stringCache.set(backend.name, name, value, version);
     }
 
     return value;
@@ -227,6 +242,103 @@ export class SecretManagerService implements OnModuleInit {
     backend?: string;
   }): Promise<string> {
     return this.get({
+      name: options.name,
+      version: 'latest',
+      backend: options.backend,
+    });
+  }
+
+  /**
+   * Get a secret as raw bytes. Use this for binary secrets where UTF-8
+   * decoding would be lossy (e.g. private keys, encryption material).
+   *
+   * @param options.name - Secret name
+   * @param options.version - Optional version (defaults to 'latest')
+   * @param options.backend - Optional backend name (uses the configured default if omitted)
+   * @returns The secret value as a Uint8Array
+   */
+  public async getBytes(options: {
+    name: string;
+    version?: string;
+    backend?: string;
+  }): Promise<Uint8Array> {
+    const { name, version, backend: backendName } = options;
+
+    if (this.#options.skipLoading) {
+      return new TextEncoder().encode(`SECRET_NOT_LOADED:${name}`);
+    }
+
+    const backend = this.#getBackend(backendName);
+    const resolvedVersion = version ?? 'latest';
+
+    return this.#tracer.startActiveSpan('secret.getBytes', async (span) => {
+      span.setAttribute('secret.name', name);
+      span.setAttribute('secret.version', resolvedVersion);
+      span.setAttribute('secret.backend', backend.name);
+
+      try {
+        const value = await this.#getBytesInternal(
+          name,
+          resolvedVersion,
+          backend,
+        );
+        span.setStatus({ code: SpanStatusCode.OK });
+        return value;
+      } catch (error) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: (error as Error).message,
+        });
+        span.recordException(error as Error);
+        throw error;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async #getBytesInternal(
+    name: string,
+    version: string,
+    backend: SecretBackend,
+  ): Promise<Uint8Array> {
+    if (this.#options.cacheEnabled !== false) {
+      const cached = this.#bytesCache.get(backend.name, name, version);
+      if (cached !== undefined) {
+        if (this.#options.debug) {
+          this.#logger.debug(`Cache hit for secret bytes: ${name}`);
+        }
+        // Defensive copy — caller mutations must not corrupt the cache.
+        return new Uint8Array(cached);
+      }
+    }
+
+    this.#logger.log({
+      msg: 'Fetching secret bytes',
+      backend: backend.name,
+      name,
+      version,
+    });
+
+    const value = await backend.getBytes(name, version);
+
+    if (this.#options.cacheEnabled !== false) {
+      // Store our own copy so a subsequent backend.getBytes mutation, or
+      // shared-reference shenanigans from a custom backend, can't reach in.
+      this.#bytesCache.set(backend.name, name, new Uint8Array(value), version);
+    }
+
+    return value;
+  }
+
+  /**
+   * Get the latest version of a secret as raw bytes.
+   */
+  public async getLatestBytes(options: {
+    name: string;
+    backend?: string;
+  }): Promise<Uint8Array> {
+    return this.getBytes({
       name: options.name,
       version: 'latest',
       backend: options.backend,
@@ -259,10 +371,11 @@ export class SecretManagerService implements OnModuleInit {
   }
 
   /**
-   * Clear the secret cache.
+   * Clear the secret cache (both string and bytes views).
    */
   public clearCache(): void {
-    this.#cache.clear();
+    this.#stringCache.clear();
+    this.#bytesCache.clear();
     this.#logger.log('Secret cache cleared');
   }
 

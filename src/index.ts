@@ -4,9 +4,15 @@ export { SecretManagerModule } from './secret-manager.module';
 // Service
 export { SecretManagerService } from './secret-manager.service';
 
-// Decorator
-export { InjectSecret } from './decorators/inject-secret.decorator';
-export type { SecretAccessor } from './decorators/inject-secret.decorator';
+// Decorators
+export {
+  InjectSecret,
+  InjectSecretBytes,
+} from './decorators/inject-secret.decorator';
+export type {
+  SecretAccessor,
+  SecretBytesAccessor,
+} from './decorators/inject-secret.decorator';
 
 // Interfaces
 export type { SecretBackend } from './interfaces/secret-backend.interface';

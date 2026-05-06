@@ -1,24 +1,29 @@
 import { SecretNotFoundError } from '../errors/secret-not-found.error';
 import { SecretBackend } from '../interfaces/secret-backend.interface';
 
+const utf8Decoder = new TextDecoder('utf-8', { fatal: false });
+const utf8Encoder = new TextEncoder();
+
 /**
  * In-memory backend for testing and local development.
  *
- * Secrets can be preloaded via the constructor or set dynamically
- * using the `set()` method.
+ * Stores secrets natively as bytes; string values are encoded as UTF-8 on
+ * `set` and decoded on `get`. Pass `Uint8Array` (or `Buffer`) directly to
+ * preserve binary data.
  */
 export class InMemorySecretBackend implements SecretBackend {
   readonly name = 'memory';
 
-  // Map of secret name -> Map of version -> value
-  private readonly secrets = new Map<string, Map<string, string>>();
+  // Map of secret name -> Map of version -> bytes
+  private readonly secrets = new Map<string, Map<string, Uint8Array>>();
 
   /**
    * Create an in-memory backend with optional initial secrets.
    *
-   * @param initialSecrets - Map of secret names to values (stored as 'latest' version)
+   * @param initialSecrets - Map of secret names to values (string or bytes;
+   *   stored as the 'latest' version).
    */
-  constructor(initialSecrets?: Record<string, string>) {
+  constructor(initialSecrets?: Record<string, string | Uint8Array>) {
     if (initialSecrets) {
       for (const [name, value] of Object.entries(initialSecrets)) {
         this.set(name, value);
@@ -27,76 +32,77 @@ export class InMemorySecretBackend implements SecretBackend {
   }
 
   /**
-   * Set a secret value.
-   *
-   * @param name - Secret name
-   * @param value - Secret value
-   * @param version - Version identifier (defaults to 'latest')
+   * Set a secret value. Strings are encoded as UTF-8. Byte inputs are
+   * copied so later mutations of the caller's array don't affect storage.
    */
-  set(name: string, value: string, version = 'latest'): void {
+  set(name: string, value: string | Uint8Array, version = 'latest'): void {
     if (!this.secrets.has(name)) {
       this.secrets.set(name, new Map());
     }
-    this.secrets.get(name)!.set(version, value);
+    const bytes =
+      typeof value === 'string'
+        ? utf8Encoder.encode(value)
+        : new Uint8Array(value);
+    this.secrets.get(name)!.set(version, bytes);
   }
 
-  async get(name: string, version?: string): Promise<string> {
-    const secretVersions = this.secrets.get(name);
-
-    if (!secretVersions) {
+  private getRaw(name: string, version?: string): Uint8Array {
+    const versions = this.secrets.get(name);
+    if (!versions) {
       throw new SecretNotFoundError(name, this.name, version);
     }
-
     const versionId = version ?? 'latest';
-    const value = secretVersions.get(versionId);
-
+    const value = versions.get(versionId);
     if (value === undefined) {
       throw new SecretNotFoundError(name, this.name, version);
     }
+    // Defensive copy — callers must not be able to mutate stored values.
+    return new Uint8Array(value);
+  }
 
-    return value;
+  async get(name: string, version?: string): Promise<string> {
+    return utf8Decoder.decode(this.getRaw(name, version));
   }
 
   async getLatest(name: string): Promise<string> {
     return this.get(name, 'latest');
   }
 
+  async getBytes(name: string, version?: string): Promise<Uint8Array> {
+    return this.getRaw(name, version);
+  }
+
+  async getLatestBytes(name: string): Promise<Uint8Array> {
+    return this.getBytes(name, 'latest');
+  }
+
   /**
    * Check if a secret exists.
-   *
-   * @param name - Secret name
-   * @param version - Version identifier (defaults to 'latest')
-   * @returns True if the secret exists
    */
   has(name: string, version = 'latest'): boolean {
-    const secretVersions = this.secrets.get(name);
-    return secretVersions?.has(version) ?? false;
+    return this.secrets.get(name)?.has(version) ?? false;
   }
 
   /**
    * Delete a secret.
    *
-   * @param name - Secret name
-   * @param version - Version to delete, or undefined to delete all versions
-   * @returns True if something was deleted
+   * @param version - Version to delete, or undefined to delete all versions.
+   * @returns True if something was deleted.
    */
   delete(name: string, version?: string): boolean {
     if (version === undefined) {
       return this.secrets.delete(name);
     }
 
-    const secretVersions = this.secrets.get(name);
-    if (!secretVersions) {
+    const versions = this.secrets.get(name);
+    if (!versions) {
       return false;
     }
 
-    const deleted = secretVersions.delete(version);
-
-    // Clean up empty version maps
-    if (secretVersions.size === 0) {
+    const deleted = versions.delete(version);
+    if (versions.size === 0) {
       this.secrets.delete(name);
     }
-
     return deleted;
   }
 
