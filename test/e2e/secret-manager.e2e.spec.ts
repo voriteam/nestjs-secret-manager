@@ -24,7 +24,11 @@ import {
   SecretValidationError,
   StartupValidation,
 } from '../../src';
-import type { SecretAccessor, SecretBytesAccessor } from '../../src';
+import type {
+  SecretAccessor,
+  SecretBackend,
+  SecretBytesAccessor,
+} from '../../src';
 import { secretRegistry } from '../../src/testing';
 import { CountingBackend } from '../support/counting-backend';
 
@@ -461,6 +465,109 @@ describe('SecretManagerModule (e2e)', () => {
           "  - payments-api-key (backend: memory, version: latest), needed by ConsumerService: Secret 'payments-api-key' not found in backend 'memory' (version: latest)",
         ].join('\n'),
       );
+    });
+
+    it('lists every failure with all of its consumers', async () => {
+      @Injectable()
+      class BillingService {
+        constructor(
+          @InjectSecret('payments-api-key') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      @Injectable()
+      class RefundService {
+        constructor(
+          @InjectSecret('payments-api-key') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      @Injectable()
+      class TokenSigner {
+        constructor(
+          @InjectSecret('signing-key') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            startupValidation: StartupValidation.Enforce,
+          }),
+        ],
+        providers: [TokenSigner, RefundService, BillingService],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect((error as SecretValidationError).message).toBe(
+        [
+          'Failed to validate 2 injected secret(s):',
+          "  - payments-api-key (backend: memory, version: latest), needed by BillingService, RefundService: Secret 'payments-api-key' not found in backend 'memory' (version: latest)",
+          "  - signing-key (backend: memory, version: latest), needed by TokenSigner: Secret 'signing-key' not found in backend 'memory' (version: latest)",
+        ].join('\n'),
+      );
+    });
+
+    it('starts every probe before any read settles', async () => {
+      const log = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+
+      class GatedBackend implements SecretBackend {
+        readonly name = 'memory';
+        readonly started: string[] = [];
+        release: () => void = () => undefined;
+        readonly #gate = new Promise<void>((resolve) => {
+          this.release = resolve;
+        });
+
+        async get(name: string): Promise<string> {
+          this.started.push(name);
+          await this.#gate;
+          return 'value';
+        }
+
+        async getBytes(name: string): Promise<Uint8Array> {
+          return new TextEncoder().encode(await this.get(name));
+        }
+      }
+
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('first') readonly getFirst: SecretAccessor,
+          @InjectSecret('second') readonly getSecond: SecretAccessor,
+          @InjectSecret('third') readonly getThird: SecretAccessor,
+        ) {}
+      }
+
+      const backend = new GatedBackend();
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [backend],
+          }),
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      const init = moduleRef.init();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(backend.started).toEqual(['first', 'second', 'third']);
+
+      backend.release();
+      await init;
+
+      expect(log.mock.calls).toContainEqual([
+        expect.stringMatching(/^Validated 3 injected secret\(s\) in \d+ms$/),
+      ]);
+
+      await moduleRef.close();
     });
 
     it('reports the version and backend a consumer pinned', async () => {
