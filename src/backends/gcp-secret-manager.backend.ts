@@ -29,7 +29,7 @@ function loadSecretVersionClient(projectId: string): SecretVersionClient {
       throw cause;
     }
     throw new Error(
-      `GcpSecretManagerBackend needs the optional peer dependency ${GCP_PEER} (^5 || ^6). Install it beside @vori/nestjs-secret-manager.`,
+      `GcpSecretManagerBackend needs the optional peer dependency ${GCP_PEER} (^5.0.0 || ^6.0.0 || ^7.0.0). Install it beside @vori/nestjs-secret-manager.`,
       { cause },
     );
   }

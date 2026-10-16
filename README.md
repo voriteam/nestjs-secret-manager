@@ -38,7 +38,7 @@ application's classes inject, and which classes inject it.
 
 - Node.js &gt;= 24
 - NestJS 10 or 11 (`@nestjs/common` and `@nestjs/core`)
-- `@google-cloud/secret-manager` 5 or 6, only when you use `GcpSecretManagerBackend`
+- `@google-cloud/secret-manager` 5, 6 or 7, only when you use `GcpSecretManagerBackend`
 
 ## Installation
 
