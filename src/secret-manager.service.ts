@@ -35,8 +35,9 @@ export class SecretManagerService {
   ) {
     this.#options = options;
     const ttl = this.#resolveCacheTtl(options);
-    this.#stringCache = new SecretCache<string>(ttl);
-    this.#bytesCache = new SecretCache<Uint8Array>(ttl);
+    const retain = options.cacheEnabled !== false;
+    this.#stringCache = new SecretCache<string>(ttl, retain);
+    this.#bytesCache = new SecretCache<Uint8Array>(ttl, retain);
     this.#initializeBackends();
   }
 
@@ -123,27 +124,17 @@ export class SecretManagerService {
     version: string,
     backend: SecretBackend,
   ): Promise<string> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#stringCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        return cached;
-      }
-    }
+    const load = async (): Promise<string> => {
+      this.#logger.debug({
+        msg: 'Fetching secret',
+        backend: backend.name,
+        name,
+        version,
+      });
+      return await backend.get(name, version);
+    };
 
-    this.#logger.debug({
-      msg: 'Fetching secret',
-      backend: backend.name,
-      name,
-      version,
-    });
-
-    const value = await backend.get(name, version);
-
-    if (this.#options.cacheEnabled !== false) {
-      this.#stringCache.set(backend.name, name, value, version);
-    }
-
-    return value;
+    return await this.#stringCache.read(backend.name, name, version, load);
   }
 
   /**
@@ -178,30 +169,23 @@ export class SecretManagerService {
     version: string,
     backend: SecretBackend,
   ): Promise<Uint8Array> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#bytesCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        // Defensive copy — caller mutations must not corrupt the cache.
-        return new Uint8Array(cached);
-      }
-    }
+    const load = async (): Promise<Uint8Array> => {
+      this.#logger.debug({
+        msg: 'Fetching secret bytes',
+        backend: backend.name,
+        name,
+        version,
+      });
+      return await backend.getBytes(name, version);
+    };
 
-    this.#logger.debug({
-      msg: 'Fetching secret bytes',
-      backend: backend.name,
+    const cached = await this.#bytesCache.read(
+      backend.name,
       name,
       version,
-    });
-
-    const value = await backend.getBytes(name, version);
-
-    if (this.#options.cacheEnabled !== false) {
-      // Store our own copy so a subsequent backend.getBytes mutation, or
-      // shared-reference shenanigans from a custom backend, can't reach in.
-      this.#bytesCache.set(backend.name, name, new Uint8Array(value), version);
-    }
-
-    return value;
+      async () => new Uint8Array(await load()),
+    );
+    return new Uint8Array(cached);
   }
 
   /**
@@ -227,6 +211,29 @@ export class SecretManagerService {
     }
 
     return backend;
+  }
+
+  /**
+   * Drop one secret's cached string and bytes, so its next read fetches it
+   * again. A fetch already in flight still answers its callers but is not
+   * cached.
+   */
+  public invalidate({
+    name,
+    version,
+    backend,
+  }: {
+    name: string;
+    version?: string;
+    backend?: string;
+  }): void {
+    if (this.#options.skipLoading) {
+      return;
+    }
+
+    const backendName = this.#getBackend(backend).name;
+    this.#stringCache.delete(backendName, name, version);
+    this.#bytesCache.delete(backendName, name, version);
   }
 
   /**
