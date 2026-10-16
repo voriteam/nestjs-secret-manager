@@ -167,6 +167,30 @@ export class SecretManagerService {
   }
 
   /**
+   * Drop one secret's cached string and bytes entries, so the next read
+   * fetches it from the backend. A fetch already in flight still answers its
+   * callers but is not cached.
+   */
+  public invalidate({
+    name,
+    version = 'latest',
+    backend,
+  }: {
+    name: string;
+    version?: string;
+    backend?: string;
+  }): void {
+    if (this.#options.skipLoading) {
+      return;
+    }
+
+    const address = { backend: this.#getBackend(backend).name, name, version };
+    this.#stringCache.invalidate(address);
+    this.#bytesCache.invalidate(address);
+    this.#logger.log({ msg: 'Invalidated secret', ...address });
+  }
+
+  /**
    * Clear the secret cache (both string and bytes views). A fetch already in
    * flight still answers its callers but is not cached.
    */

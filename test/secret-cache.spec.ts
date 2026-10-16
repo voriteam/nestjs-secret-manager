@@ -192,6 +192,66 @@ describe('SecretCache', () => {
     });
   });
 
+  describe('invalidate', () => {
+    const other = { ...address, name: 'other' };
+
+    it('drops one key and keeps the others', async () => {
+      const cache = new SecretCache<string>(forever);
+      await cache.read(address, async () => 'v1');
+      await cache.read(other, async () => 'o1');
+
+      cache.invalidate(address);
+
+      await expect(cache.read(address, async () => 'v2')).resolves.toBe('v2');
+      await expect(cache.read(other, async () => 'unused')).resolves.toBe('o1');
+    });
+
+    it('lets a load in flight at invalidation answer its callers without storing or evicting a newer load', async () => {
+      const cache = new SecretCache<string>(forever);
+      const beforeLoad = deferred<string>();
+      const afterLoad = deferred<string>();
+      let loads = 0;
+
+      const before = cache.read(address, () => {
+        loads += 1;
+        return beforeLoad.promise;
+      });
+      cache.invalidate(address);
+      const after = cache.read(address, () => {
+        loads += 1;
+        return afterLoad.promise;
+      });
+
+      beforeLoad.resolve('stale');
+      await expect(before).resolves.toBe('stale');
+
+      const joiner = cache.read(address, async () => {
+        loads += 1;
+        return 'third';
+      });
+      afterLoad.resolve('fresh');
+
+      await expect(after).resolves.toBe('fresh');
+      await expect(joiner).resolves.toBe('fresh');
+      await expect(cache.read(address, async () => 'unused')).resolves.toBe(
+        'fresh',
+      );
+      expect(loads).toBe(2);
+    });
+
+    it("leaves another key's in-flight load storing its value", async () => {
+      const cache = new SecretCache<string>(forever);
+      const otherLoad = deferred<string>();
+
+      const pending = cache.read(other, () => otherLoad.promise);
+      cache.invalidate(address);
+      otherLoad.resolve('o1');
+
+      await expect(pending).resolves.toBe('o1');
+      await expect(cache.read(other, async () => 'unused')).resolves.toBe('o1');
+    });
+  });
+
   describe('TTL', () => {
     beforeEach(() => {
       jest.useFakeTimers();

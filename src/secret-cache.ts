@@ -47,12 +47,15 @@ interface CacheEntry<T> {
   readonly cachedAt: number;
 }
 
+function cacheKey({ backend, name, version }: SecretAddress): string {
+  return `${backend}:${name}:${version}`;
+}
+
 export class SecretCache<T> {
   readonly #policy: CachePolicy;
   readonly #copy: (value: T) => T;
   readonly #values = new Map<string, CacheEntry<T>>();
   readonly #inFlight = new Map<string, Promise<T>>();
-  #generation = 0;
 
   constructor(policy: CachePolicy, copy: (value: T) => T = (value) => value) {
     this.#policy = policy;
@@ -60,7 +63,7 @@ export class SecretCache<T> {
   }
 
   async read(address: SecretAddress, load: () => Promise<T>): Promise<T> {
-    const key = `${address.backend}:${address.name}:${address.version}`;
+    const key = cacheKey(address);
     const hit = this.#fresh(key);
     if (hit !== undefined) {
       return this.#copy(hit);
@@ -68,29 +71,33 @@ export class SecretCache<T> {
 
     let pending = this.#inFlight.get(key);
     if (pending === undefined) {
-      const generation = this.#generation;
-      const fetched = (async () => {
-        const owned = this.#copy(await load());
-        if (generation === this.#generation) {
-          this.#store(key, owned);
-        }
-        return owned;
-      })().finally(() => {
-        const ownsKey = this.#inFlight.get(key) === fetched;
-        if (ownsKey) {
-          this.#inFlight.delete(key);
-        }
-      });
+      const fetched = (async () => this.#copy(await load()))()
+        .then((owned) => {
+          if (this.#inFlight.get(key) === fetched) {
+            this.#store(key, owned);
+          }
+          return owned;
+        })
+        .finally(() => {
+          if (this.#inFlight.get(key) === fetched) {
+            this.#inFlight.delete(key);
+          }
+        });
       this.#inFlight.set(key, fetched);
       pending = fetched;
     }
     return this.#copy(await pending);
   }
 
+  invalidate(address: SecretAddress): void {
+    const key = cacheKey(address);
+    this.#values.delete(key);
+    this.#inFlight.delete(key);
+  }
+
   clear(): void {
     this.#values.clear();
     this.#inFlight.clear();
-    this.#generation += 1;
   }
 
   #fresh(key: string): T | undefined {

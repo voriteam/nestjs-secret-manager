@@ -17,6 +17,14 @@ import type {
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from '../src/testing';
 import { CountingBackend } from './support/counting-backend';
 
+class DeferredBackend extends InMemorySecretBackend {
+  readonly pending: ((value: string) => void)[] = [];
+
+  override get(): Promise<string> {
+    return new Promise((resolve) => this.pending.push(resolve));
+  }
+}
+
 describe('SecretManagerService', () => {
   let service: SecretManagerService;
   let module: TestingModule;
@@ -385,14 +393,6 @@ describe('SecretManagerService concurrent reads', () => {
   });
 
   it('does not cache a fetch that was in flight when clearCache ran', async () => {
-    class DeferredBackend extends InMemorySecretBackend {
-      readonly pending: ((value: string) => void)[] = [];
-
-      override get(): Promise<string> {
-        return new Promise((resolve) => this.pending.push(resolve));
-      }
-    }
-
     const backend = new DeferredBackend();
     const service = new SecretManagerService({
       defaultBackend: 'memory',
@@ -446,6 +446,106 @@ describe('SecretManagerService concurrent reads', () => {
         },
       ],
     ]);
+  });
+});
+
+describe('SecretManagerService invalidate', () => {
+  it('re-reads one secret from the backend and keeps serving the others from cache', async () => {
+    const backend = new CountingBackend({
+      'api-key': 'v1',
+      'db-password': 'p1',
+    });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 0,
+    });
+    await service.get({ name: 'api-key' });
+    await service.get({ name: 'db-password' });
+    backend.set('api-key', 'v2');
+
+    service.invalidate({ name: 'api-key' });
+
+    await expect(service.get({ name: 'api-key' })).resolves.toBe('v2');
+    await expect(service.get({ name: 'db-password' })).resolves.toBe('p1');
+    expect(backend.calls).toEqual([
+      ['get', 'api-key', 'latest'],
+      ['get', 'db-password', 'latest'],
+      ['get', 'api-key', 'latest'],
+    ]);
+  });
+
+  it('drops the bytes view with the string view', async () => {
+    const backend = new CountingBackend({ 'api-key': 'v1' });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 0,
+    });
+    await service.get({ name: 'api-key' });
+    await service.getBytes({ name: 'api-key' });
+
+    service.invalidate({ name: 'api-key' });
+    await service.get({ name: 'api-key' });
+    await service.getBytes({ name: 'api-key' });
+
+    expect(backend.calls).toEqual([
+      ['get', 'api-key', 'latest'],
+      ['getBytes', 'api-key', 'latest'],
+      ['get', 'api-key', 'latest'],
+      ['getBytes', 'api-key', 'latest'],
+    ]);
+  });
+
+  it('invalidates only the version it names', async () => {
+    const backend = new CountingBackend({ 'api-key': 'v1' });
+    backend.set('api-key', 'v2', '2');
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 0,
+    });
+    await service.get({ name: 'api-key' });
+    await service.get({ name: 'api-key', version: '2' });
+
+    service.invalidate({ name: 'api-key', version: '2' });
+    await service.get({ name: 'api-key' });
+    await service.get({ name: 'api-key', version: '2' });
+
+    expect(backend.calls).toEqual([
+      ['get', 'api-key', 'latest'],
+      ['get', 'api-key', '2'],
+      ['get', 'api-key', '2'],
+    ]);
+  });
+
+  it('does not cache a fetch that was in flight when invalidate ran', async () => {
+    const backend = new DeferredBackend();
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 0,
+    });
+
+    const beforeInvalidate = service.get({ name: 'api-key' });
+    service.invalidate({ name: 'api-key' });
+    backend.pending[0]?.('stale');
+    await expect(beforeInvalidate).resolves.toBe('stale');
+
+    const afterInvalidate = service.get({ name: 'api-key' });
+    expect(backend.pending).toHaveLength(2);
+    backend.pending[1]?.('fresh');
+    await expect(afterInvalidate).resolves.toBe('fresh');
+  });
+
+  it('does nothing under skipLoading', async () => {
+    const service = new SecretManagerService({ skipLoading: true });
+
+    service.invalidate({ name: 'api-key' });
+
+    await expect(service.get({ name: 'api-key' })).resolves.toBe(
+      '{"_placeholder":true,"key":"api-key"}',
+    );
   });
 });
 
