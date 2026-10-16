@@ -27,7 +27,6 @@ export type {
   SecretManagerModuleOptions,
   SecretManagerModuleAsyncOptions,
   SecretManagerOptionsFactory,
-  SecretManagerTestingOptions,
   InjectSecretOptions,
 } from './interfaces/secret-manager-options.interface';
 
