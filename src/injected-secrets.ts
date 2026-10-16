@@ -16,9 +16,10 @@ export interface InjectedSecret {
   readonly consumers: readonly string[];
 }
 
-type NestModule = ModulesContainer extends Map<string, infer M> ? M : never;
+type ContainerModule =
+  ModulesContainer extends Map<string, infer M> ? M : never;
 type InstanceWrapper =
-  NestModule['providers'] extends Map<unknown, infer W> ? W : never;
+  ContainerModule['providers'] extends Map<unknown, infer W> ? W : never;
 
 /**
  * The secrets this graph injects. It reads metadata only, instantiates
@@ -28,8 +29,11 @@ type InstanceWrapper =
  * Walks every module's providers, controllers, injectables (the guards,
  * interceptors, pipes and filters Nest builds for the module) and
  * middlewares, because the injector constructs all four. Middlewares are
- * registered by `NestApplication.init()` before `onModuleInit`, and an
- * application context has none.
+ * registered by `NestApplication.init()` before `onModuleInit`. An
+ * application context, including a preview-mode one, has no middleware, so a
+ * graph built with `createApplicationContext` omits middleware consumers.
+ * `NestFactory.create(AppModule, { preview: true })` followed by
+ * `await app.init()` registers middleware without constructing it.
  *
  * One entry per requirement token, so a string and a bytes injection of one
  * name are two entries. Ordered by name, backend, version, then kind, so the
@@ -60,7 +64,7 @@ export function collectInjectedSecrets(
           requirement,
           consumers: new Set<string>(),
         };
-        entry.consumers.add(consumerName(wrapper));
+        entry.consumers.add(String(wrapper.name));
         found.set(requirement.token, entry);
       }
     }
@@ -70,7 +74,11 @@ export function collectInjectedSecrets(
       requirement,
       consumers: [...consumers].sort(),
     }))
-    .sort((a, b) => compareRequirements(a.requirement, b.requirement));
+    .sort((a, b) => {
+      const left = sortKey(a.requirement);
+      const right = sortKey(b.requirement);
+      return left === right ? 0 : left < right ? -1 : 1;
+    });
 }
 
 /**
@@ -103,32 +111,6 @@ function dependencyTokens(wrapper: InstanceWrapper): unknown[] {
   return [...byIndex.values()];
 }
 
-function consumerName(wrapper: InstanceWrapper): string {
-  const { metatype, inject, name } = wrapper;
-  if (inject == null && typeof metatype === 'function' && metatype.name) {
-    return metatype.name;
-  }
-  return typeof name === 'string' ? name : String(name);
-}
-
-function compareRequirements(
-  a: SecretRequirement,
-  b: SecretRequirement,
-): number {
-  const keyOf = (r: SecretRequirement): string[] => [
-    r.name,
-    r.backend ?? '',
-    r.version ?? '',
-    r.kind,
-  ];
-  const left = keyOf(a);
-  const right = keyOf(b);
-  for (let i = 0; i < left.length; i += 1) {
-    const x = left[i] ?? '';
-    const y = right[i] ?? '';
-    if (x !== y) {
-      return x < y ? -1 : 1;
-    }
-  }
-  return 0;
+function sortKey({ name, backend, version, kind }: SecretRequirement): string {
+  return [name, backend ?? '', version ?? '', kind].join('\0');
 }

@@ -1,4 +1,11 @@
-import { Inject, Injectable, Module } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  MiddlewareConsumer,
+  Module,
+  NestMiddleware,
+  NestModule,
+} from '@nestjs/common';
 import { ModulesContainer, NestContainer, NestFactory } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 
@@ -127,6 +134,35 @@ describe('collectInjectedSecrets', () => {
     await moduleRef.close();
   });
 
+  it('names a class provider by the class Nest constructs', async () => {
+    @Injectable()
+    class Implementation {
+      constructor(
+        @InjectSecret('class-secret') readonly getKey: SecretAccessor,
+      ) {}
+    }
+
+    abstract class Contract {}
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [SecretManagerModule.forTesting()],
+      providers: [{ provide: Contract, useClass: Implementation }],
+    }).compile();
+
+    expect(collectInjectedSecrets(moduleRef.get(ModulesContainer))).toEqual([
+      {
+        requirement: {
+          name: 'class-secret',
+          token: 'SECRET_default_class-secret_latest',
+          kind: 'string',
+        },
+        consumers: ['Implementation'],
+      },
+    ]);
+
+    await moduleRef.close();
+  });
+
   it('follows the injector when a subclass re-declares a constructor slot', async () => {
     @Injectable()
     class Base {
@@ -204,6 +240,52 @@ describe('collectInjectedSecrets', () => {
           kind: 'string',
         },
         consumers: ['ConsumerService'],
+      },
+    ]);
+    expect(constructed).toBe(0);
+
+    await app.close();
+  });
+
+  it('reads middleware from a preview-mode HTTP app after init, which constructs nothing', async () => {
+    let constructed = 0;
+
+    @Injectable()
+    class SecretMiddleware implements NestMiddleware {
+      constructor(
+        @InjectSecret('middleware-secret') readonly getKey: SecretAccessor,
+      ) {
+        constructed += 1;
+      }
+
+      use(_req: unknown, _res: unknown, next: () => void): void {
+        next();
+      }
+    }
+
+    @Module({ imports: [SecretManagerModule.forTesting()] })
+    class AppModule implements NestModule {
+      configure(consumer: MiddlewareConsumer): void {
+        consumer.apply(SecretMiddleware).forRoutes('secured');
+      }
+    }
+
+    const app = await NestFactory.create(AppModule, {
+      preview: true,
+      logger: false,
+    });
+    await app.init();
+
+    const { container } = app as unknown as { container: NestContainer };
+
+    expect(collectInjectedSecrets(container.getModules())).toEqual([
+      {
+        requirement: {
+          name: 'middleware-secret',
+          token: 'SECRET_default_middleware-secret_latest',
+          kind: 'string',
+        },
+        consumers: ['SecretMiddleware'],
       },
     ]);
     expect(constructed).toBe(0);
