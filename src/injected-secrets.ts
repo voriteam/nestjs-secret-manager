@@ -14,9 +14,17 @@ export interface InjectedSecret {
    * constructs, so `{ provide: Foo, useClass: Bar }` reads `Bar`, the class
    * that carries the decorator. A factory or alias provider is named by its
    * token: a string as itself, a class by its name, a symbol as
-   * `Symbol(description)`.
+   * `Symbol(description)`. A name that different classes share is qualified
+   * with the consumer's module, as in `BillingModule.ConsumerService`.
+   * Otherwise one class that two modules provide is one entry.
    */
   readonly consumers: readonly string[];
+}
+
+interface Consumer {
+  readonly name: string;
+  readonly moduleName: string;
+  readonly metatype: unknown;
 }
 
 type ContainerModule =
@@ -46,7 +54,7 @@ export function collectInjectedSecrets(
 ): InjectedSecret[] {
   const found = new Map<
     string,
-    { requirement: SecretRequirement; consumers: Set<string> }
+    { requirement: SecretRequirement; consumers: Consumer[] }
   >();
   for (const moduleRef of modules.values()) {
     const wrappers = [
@@ -64,9 +72,13 @@ export function collectInjectedSecrets(
         }
         const entry = found.get(requirement.token) ?? {
           requirement,
-          consumers: new Set<string>(),
+          consumers: [],
         };
-        entry.consumers.add(String(wrapper.name));
+        entry.consumers.push({
+          name: String(wrapper.name),
+          moduleName: moduleRef.name,
+          metatype: wrapper.metatype,
+        });
         found.set(requirement.token, entry);
       }
     }
@@ -74,7 +86,7 @@ export function collectInjectedSecrets(
   return [...found.values()]
     .map(({ requirement, consumers }) => ({
       requirement,
-      consumers: [...consumers].sort(),
+      consumers: consumerNames(consumers),
     }))
     .sort((a, b) => {
       const left = sortKey(a.requirement);
@@ -114,6 +126,23 @@ function dependencyTokens(wrapper: InstanceWrapper): unknown[] {
   const properties: { type: unknown }[] =
     Reflect.getMetadata(PROPERTY_DEPS_METADATA, metatype) ?? [];
   return [...byIndex.values(), ...properties.map(({ type }) => type)];
+}
+
+function consumerNames(consumers: readonly Consumer[]): string[] {
+  const shared = new Set(
+    consumers
+      .filter((consumer) =>
+        consumers.some(
+          ({ name, metatype }) =>
+            name === consumer.name && metatype !== consumer.metatype,
+        ),
+      )
+      .map(({ name }) => name),
+  );
+  const names = consumers.map(({ name, moduleName }) =>
+    shared.has(name) ? `${moduleName}.${name}` : name,
+  );
+  return [...new Set(names)].sort();
 }
 
 function sortKey({ name, backend, version, kind }: SecretRequirement): string {
