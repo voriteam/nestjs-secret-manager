@@ -4,9 +4,11 @@ export { SecretManagerModule } from './secret-manager.module';
 // Service
 export { SecretManagerService } from './secret-manager.service';
 
-// Registry
+// Registry and graph walk
 export { SecretKind } from './constants';
 export type { SecretRequirement } from './constants';
+export { collectInjectedSecrets } from './injected-secrets';
+export type { InjectedSecret } from './injected-secrets';
 
 // Decorators
 export {
