@@ -112,20 +112,6 @@ export class SecretManagerService {
   }
 
   /**
-   * Get the latest version of a secret.
-   */
-  public async getLatest(options: {
-    name: string;
-    backend?: string;
-  }): Promise<string> {
-    return this.get({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
-  }
-
-  /**
    * Get a secret as raw bytes. Use this for binary secrets where UTF-8
    * decoding would be lossy (e.g. private keys, encryption material).
    *
@@ -152,20 +138,6 @@ export class SecretManagerService {
     return await this.#bytesCache.read(address, () => {
       this.#logFetch(SecretKind.Bytes, address);
       return source.getBytes(name, version);
-    });
-  }
-
-  /**
-   * Get the latest version of a secret as raw bytes.
-   */
-  public async getLatestBytes(options: {
-    name: string;
-    backend?: string;
-  }): Promise<Uint8Array> {
-    return this.getBytes({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
     });
   }
 

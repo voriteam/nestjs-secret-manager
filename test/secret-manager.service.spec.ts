@@ -9,7 +9,11 @@ import {
   SecretManagerService,
   SecretNotFoundError,
 } from '../src';
-import type { SecretAccessor, SecretBytesAccessor } from '../src';
+import type {
+  SecretAccessor,
+  SecretBackend,
+  SecretBytesAccessor,
+} from '../src';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from '../src/testing';
 import { CountingBackend } from './support/counting-backend';
 
@@ -125,13 +129,6 @@ describe('SecretManagerService', () => {
       );
     });
 
-    it('getLatestBytes resolves the latest version', async () => {
-      memoryBackend.set('api-key', 'v1', '1');
-      memoryBackend.set('api-key', 'v2');
-      const bytes = await service.getLatestBytes({ name: 'api-key' });
-      expect(new TextDecoder().decode(bytes)).toBe('v2');
-    });
-
     it('mutating returned bytes does not corrupt the cache', async () => {
       const first = await service.getBytes({ name: 'api-key' });
       first.fill(0); // attempt to corrupt
@@ -140,14 +137,26 @@ describe('SecretManagerService', () => {
     });
   });
 
-  describe('getLatest', () => {
-    it('should retrieve the latest version of a secret', async () => {
-      const value = await service.getLatest({ name: 'api-key' });
-      expect(value).toBe('test-api-key-value');
-    });
-  });
-
   describe('custom backends', () => {
+    it('reads through a backend that implements only get and getBytes', async () => {
+      const vault: SecretBackend = {
+        name: 'vault',
+        get: async (name, version) => `${name}@${version}`,
+        getBytes: async (name) => new TextEncoder().encode(name),
+      };
+      const vaultService = new SecretManagerService({
+        defaultBackend: 'vault',
+        backends: [vault],
+      });
+
+      await expect(vaultService.get({ name: 'api-key' })).resolves.toBe(
+        'api-key@latest',
+      );
+      expect(
+        new TextDecoder().decode(await vaultService.getBytes({ name: 'blob' })),
+      ).toBe('blob');
+    });
+
     it('should resolve secrets from a non-default backend', async () => {
       const customBackend = new InMemorySecretBackend({
         'custom-secret': 'custom-value',

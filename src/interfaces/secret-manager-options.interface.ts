@@ -60,12 +60,6 @@ export interface SecretManagerModuleOptions {
   startupValidation?: StartupValidation;
 
   /**
-   * Whether to enable debug logging for secret access.
-   * @default false
-   */
-  debug?: boolean;
-
-  /**
    * Skip loading secrets entirely. Every read returns the placeholder
    * `{"_placeholder":true,"key":"<name>"}` (UTF-8 encoded for bytes), and
    * validation is skipped. Useful for CLI tools and environments without

@@ -70,15 +70,7 @@ describe('InMemorySecretBackend', () => {
     });
   });
 
-  describe('getLatest', () => {
-    it('should retrieve the latest version', async () => {
-      backend.set('api-key', 'latest-value');
-      const value = await backend.getLatest('api-key');
-      expect(value).toBe('latest-value');
-    });
-  });
-
-  describe('getBytes / getLatestBytes', () => {
+  describe('getBytes', () => {
     it('returns bytes for a string-set secret (UTF-8 encoded)', async () => {
       backend.set('api-key', 'hello');
       const bytes = await backend.getBytes('api-key');
@@ -90,13 +82,6 @@ describe('InMemorySecretBackend', () => {
       backend.set('private-key', binary);
       const bytes = await backend.getBytes('private-key');
       expect(bytes).toEqual(binary);
-    });
-
-    it('getLatestBytes is equivalent to getBytes(name, "latest")', async () => {
-      backend.set('api-key', 'v');
-      expect(await backend.getLatestBytes('api-key')).toEqual(
-        await backend.getBytes('api-key'),
-      );
     });
 
     it('throws SecretNotFoundError for missing bytes', async () => {
