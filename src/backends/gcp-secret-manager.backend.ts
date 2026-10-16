@@ -70,10 +70,6 @@ export class GcpSecretManagerBackend implements SecretBackend {
     const secretPath = `projects/${this.projectId}/secrets/${name}/versions/${versionId}`;
 
     try {
-      this.logger.debug(
-        `Fetching secret from GCP: ${name} (version: ${versionId})`,
-      );
-
       const [response] = await this.#client.accessSecretVersion({
         name: secretPath,
       });
@@ -124,7 +120,6 @@ export class GcpSecretManagerBackend implements SecretBackend {
     if (typeof payload === 'string') {
       return new TextEncoder().encode(payload);
     }
-    // Buffer is already a Uint8Array; return without re-allocation.
-    return payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    return payload;
   }
 }
