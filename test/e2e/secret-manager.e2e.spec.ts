@@ -8,6 +8,7 @@ import {
   Module,
   NestMiddleware,
   NestModule,
+  OnModuleInit,
   UseGuards,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -494,6 +495,56 @@ describe('SecretManagerModule (e2e)', () => {
           consumers: ['VaultClient'],
           error: new SecretNotFoundError('vault-token', 'vault', '3'),
         },
+      ]);
+    });
+
+    it('reports every failure before a consumer two imports deep reads its secret in onModuleInit', async () => {
+      @Injectable()
+      class EagerReader implements OnModuleInit {
+        constructor(
+          @InjectSecret('eager-secret') readonly getKey: SecretAccessor,
+        ) {}
+
+        async onModuleInit(): Promise<void> {
+          await this.getKey();
+        }
+      }
+
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('other-secret') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      @Module({ providers: [EagerReader] })
+      class DeepModule {}
+
+      @Module({ imports: [DeepModule] })
+      class FeatureModule {}
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            startupValidation: StartupValidation.Enforce,
+          }),
+          FeatureModule,
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(error).toBeInstanceOf(SecretValidationError);
+      expect(
+        (error as SecretValidationError).failures.map(
+          ({ name, consumers }) => ({ name, consumers }),
+        ),
+      ).toEqual([
+        { name: 'eager-secret', consumers: ['EagerReader'] },
+        { name: 'other-secret', consumers: ['ConsumerService'] },
       ]);
     });
 

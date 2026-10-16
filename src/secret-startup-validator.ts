@@ -40,6 +40,15 @@ export class SecretStartupValidator implements OnModuleInit {
     this.#defaultBackend = options.defaultBackend;
     this.#modules = modules;
     this.#secrets = secrets;
+
+    // Nest runs onModuleInit deepest module first. Nest 11 puts global modules
+    // ahead of every other; Nest 10 gives them their import depth, which would
+    // let a deeper consumer read a missing secret before this report.
+    for (const moduleRef of modules.values()) {
+      if (moduleRef.providers.has(SecretStartupValidator)) {
+        moduleRef.distance = Number.MAX_VALUE;
+      }
+    }
   }
 
   async onModuleInit(): Promise<void> {
