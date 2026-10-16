@@ -40,12 +40,13 @@ access—and dependency injection (e.g., tracing the dependency map).
 ## Requirements
 
 - Node.js &gt;= 24
-- NestJS `^11.0.0`
+- NestJS `^10.0.0 || ^11.0.0`
+- `@google-cloud/secret-manager` `^5.0.0 || ^6.0.0 || ^7.0.0`, only for `GcpSecretManagerBackend`
 
 ## Installation
 
 ```bash
-pnpm add @vori/nestjs-secret-manager
+pnpm add @vori/nestjs-secret-manager @google-cloud/secret-manager
 ```
 
 ## Quick start
@@ -152,7 +153,7 @@ SecretManagerModule.forRootAsync({
   imports: [ConfigModule],
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'gcp',
-    backends: [new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID'))],
+    backends: [new GcpSecretManagerBackend(config.getOrThrow('GCP_PROJECT_ID'))],
     startupValidation:
       config.get('NODE_ENV') === 'production'
         ? StartupValidation.Enforce
@@ -410,8 +411,8 @@ SecretManagerModule.forRootAsync({
     defaultBackend: 'vault',
     backends: [
       new VaultBackend({
-        url: config.get('VAULT_URL'),
-        token: config.get('VAULT_TOKEN'),
+        url: config.getOrThrow('VAULT_URL'),
+        token: config.getOrThrow('VAULT_TOKEN'),
       }),
     ],
   }),

@@ -2,9 +2,12 @@ import {
   CanActivate,
   Controller,
   Get,
+  Global,
   Injectable,
   Logger,
+  Module,
   ModuleMetadata,
+  OnModuleInit,
   UseGuards,
 } from '@nestjs/common';
 import { ModulesContainer } from '@nestjs/core';
@@ -99,6 +102,7 @@ async function boot(
   const moduleRef = await Test.createTestingModule({
     ...metadata,
     imports: [
+      ...(metadata.imports ?? []),
       SecretManagerModule.forRoot({
         defaultBackend: 'memory',
         backends: [new InMemorySecretBackend({ 'present-key': 'value' })],
@@ -205,6 +209,34 @@ describe('startup validation', () => {
         "  - webhook-key (backend: memory, version: latest), needed by WebhookVerifier: Secret 'webhook-key' not found in backend 'memory' (version: latest)",
         "  - partner-key (backend: memory, version: latest), needed by PARTNER_CLIENT: Secret 'partner-key' not found in backend 'memory' (version: latest)",
         "  - certificate (backend: memory, version: latest, bytes), needed by CERTIFICATES: Secret 'certificate' not found in backend 'memory' (version: latest)",
+      ].join('\n'),
+    );
+  });
+
+  it('reports before a global module imported first reads its secret in onModuleInit', async () => {
+    @Injectable()
+    class EagerReader implements OnModuleInit {
+      constructor(@InjectSecret('eager-key') readonly getKey: SecretAccessor) {}
+
+      async onModuleInit(): Promise<void> {
+        await this.getKey();
+      }
+    }
+
+    @Global()
+    @Module({ providers: [EagerReader] })
+    class EagerModule {}
+
+    const error = await bootError({
+      imports: [EagerModule],
+      providers: [BillingService],
+    });
+
+    expect((error as Error).message).toBe(
+      [
+        'Failed to validate 2 injected secret(s):',
+        billingFailure,
+        "  - eager-key (backend: memory, version: latest), needed by EagerReader: Secret 'eager-key' not found in backend 'memory' (version: latest)",
       ].join('\n'),
     );
   });
