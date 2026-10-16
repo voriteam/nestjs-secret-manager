@@ -64,16 +64,8 @@ export class InMemorySecretBackend implements SecretBackend {
     return utf8Decoder.decode(this.getRaw(name, version));
   }
 
-  async getLatest(name: string): Promise<string> {
-    return this.get(name, 'latest');
-  }
-
   async getBytes(name: string, version?: string): Promise<Uint8Array> {
     return this.getRaw(name, version);
-  }
-
-  async getLatestBytes(name: string): Promise<Uint8Array> {
-    return this.getBytes(name, 'latest');
   }
 
   /**

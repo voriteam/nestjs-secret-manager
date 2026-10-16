@@ -208,22 +208,24 @@ export class SecretManagerService implements OnModuleInit {
     version: string,
     backend: SecretBackend,
   ): Promise<string> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#stringCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret: ${name}`);
-        }
-        return cached;
-      }
-    }
+    const cached =
+      this.#options.cacheEnabled !== false
+        ? this.#stringCache.get(backend.name, name, version)
+        : undefined;
+    const cacheHit = cached !== undefined;
 
+    trace.getActiveSpan()?.setAttribute('secret.cache_hit', cacheHit);
     this.#logger.log({
       msg: 'Fetching secret',
       backend: backend.name,
       name,
       version,
+      cache_hit: cacheHit,
     });
+
+    if (cached !== undefined) {
+      return cached;
+    }
 
     const value = await backend.get(name, version);
 
@@ -232,20 +234,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret.
-   */
-  public async getLatest(options: {
-    name: string;
-    backend?: string;
-  }): Promise<string> {
-    return this.get({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**
@@ -302,23 +290,25 @@ export class SecretManagerService implements OnModuleInit {
     version: string,
     backend: SecretBackend,
   ): Promise<Uint8Array> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#bytesCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret bytes: ${name}`);
-        }
-        // Defensive copy — caller mutations must not corrupt the cache.
-        return new Uint8Array(cached);
-      }
-    }
+    const cached =
+      this.#options.cacheEnabled !== false
+        ? this.#bytesCache.get(backend.name, name, version)
+        : undefined;
+    const cacheHit = cached !== undefined;
 
+    trace.getActiveSpan()?.setAttribute('secret.cache_hit', cacheHit);
     this.#logger.log({
       msg: 'Fetching secret bytes',
       backend: backend.name,
       name,
       version,
+      cache_hit: cacheHit,
     });
+
+    if (cached !== undefined) {
+      // Defensive copy — caller mutations must not corrupt the cache.
+      return new Uint8Array(cached);
+    }
 
     const value = await backend.getBytes(name, version);
 
@@ -329,20 +319,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret as raw bytes.
-   */
-  public async getLatestBytes(options: {
-    name: string;
-    backend?: string;
-  }): Promise<Uint8Array> {
-    return this.getBytes({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**

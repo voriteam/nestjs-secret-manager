@@ -77,10 +77,6 @@ export class GcpSecretManagerBackend implements SecretBackend {
       : Buffer.from(payload).toString('utf-8');
   }
 
-  async getLatest(name: string): Promise<string> {
-    return this.get(name, 'latest');
-  }
-
   async getBytes(name: string, version?: string): Promise<Uint8Array> {
     const payload = await this.fetchPayload(name, version);
     if (typeof payload === 'string') {
@@ -88,9 +84,5 @@ export class GcpSecretManagerBackend implements SecretBackend {
     }
     // Buffer is already a Uint8Array; return without re-allocation.
     return payload instanceof Uint8Array ? payload : new Uint8Array(payload);
-  }
-
-  async getLatestBytes(name: string): Promise<Uint8Array> {
-    return this.getBytes(name, 'latest');
   }
 }

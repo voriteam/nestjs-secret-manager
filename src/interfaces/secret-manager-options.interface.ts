@@ -47,12 +47,6 @@ export interface SecretManagerModuleOptions {
   validateOnStartup?: boolean;
 
   /**
-   * Whether to enable debug logging for secret access.
-   * @default false
-   */
-  debug?: boolean;
-
-  /**
    * Skip loading secrets entirely. @InjectSecret injects placeholder
    * strings (`SECRET_NOT_LOADED:<name>`) and validation is skipped.
    * Useful for CLI tools and environments without secret backend access.
