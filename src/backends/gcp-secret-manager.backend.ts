@@ -1,4 +1,4 @@
-import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
+import type { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { Logger } from '@nestjs/common';
 
 import { SecretAccessDeniedError } from '../errors/secret-access-denied.error';
@@ -13,11 +13,15 @@ import { SecretBackend } from '../interfaces/secret-backend.interface';
  */
 export class GcpSecretManagerBackend implements SecretBackend {
   readonly name = 'gcp';
-  private readonly client: SecretManagerServiceClient;
+  readonly #client: SecretManagerServiceClient;
   private readonly logger = new Logger(GcpSecretManagerBackend.name);
 
+  /** @throws if the optional peer `@google-cloud/secret-manager` is not installed. */
   constructor(private readonly projectId: string) {
-    this.client = new SecretManagerServiceClient({ projectId });
+    const { SecretManagerServiceClient: Client } =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred so the peer stays optional
+      require('@google-cloud/secret-manager') as typeof import('@google-cloud/secret-manager');
+    this.#client = new Client({ projectId });
   }
 
   private async fetchPayload(
@@ -32,7 +36,7 @@ export class GcpSecretManagerBackend implements SecretBackend {
         `Fetching secret from GCP: ${name} (version: ${versionId})`,
       );
 
-      const [response] = await this.client.accessSecretVersion({
+      const [response] = await this.#client.accessSecretVersion({
         name: secretPath,
       });
 

@@ -42,7 +42,7 @@ import { SecretStartupValidator } from './secret-startup-validator';
  *   imports: [
  *     SecretManagerModule.forRoot({
  *       defaultBackend: 'gcp',
- *       backends: [new GcpSecretManagerBackend({ projectId: 'my-project' })],
+ *       backends: [new GcpSecretManagerBackend('my-project')],
  *     }),
  *   ],
  * })
@@ -58,11 +58,7 @@ import { SecretStartupValidator } from './secret-startup-validator';
  *       imports: [ConfigModule],
  *       useFactory: (config: ConfigService) => ({
  *         defaultBackend: 'gcp',
- *         backends: [
- *           new GcpSecretManagerBackend({
- *             projectId: config.get('GCP_PROJECT_ID'),
- *           }),
- *         ],
+ *         backends: [new GcpSecretManagerBackend(config.getOrThrow('GCP_PROJECT_ID'))],
  *       }),
  *       inject: [ConfigService],
  *     }),
