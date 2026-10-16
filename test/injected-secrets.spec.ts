@@ -15,6 +15,7 @@ import {
   SecretManagerModule,
   SecretManagerService,
   collectInjectedSecrets,
+  secretAccessorToken,
 } from '../src';
 import type { SecretAccessor, SecretBytesAccessor } from '../src';
 import { secretRegistry } from '../src/testing';
@@ -200,6 +201,54 @@ describe('collectInjectedSecrets', () => {
           kind: 'string',
         },
         consumers: ['Inherits'],
+      },
+    ]);
+
+    await moduleRef.close();
+  });
+
+  it('counts secrets injected into properties, including inherited ones', async () => {
+    @Injectable()
+    class Base {
+      @Inject(secretAccessorToken('base-property-secret'))
+      readonly getBase!: SecretAccessor;
+    }
+
+    @Injectable()
+    class PropertyConsumer extends Base {
+      @Inject(secretAccessorToken('property-secret'))
+      readonly getKey!: SecretAccessor;
+    }
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        SecretManagerModule.forTesting({
+          'base-property-secret': 'base',
+          'property-secret': 'own',
+        }),
+      ],
+      providers: [PropertyConsumer],
+    }).compile();
+
+    const consumer = moduleRef.get(PropertyConsumer);
+    await expect(consumer.getBase()).resolves.toBe('base');
+    await expect(consumer.getKey()).resolves.toBe('own');
+    expect(collectInjectedSecrets(moduleRef.get(ModulesContainer))).toEqual([
+      {
+        requirement: {
+          name: 'base-property-secret',
+          token: 'SECRET_default_base-property-secret_latest',
+          kind: 'string',
+        },
+        consumers: ['PropertyConsumer'],
+      },
+      {
+        requirement: {
+          name: 'property-secret',
+          token: 'SECRET_default_property-secret_latest',
+          kind: 'string',
+        },
+        consumers: ['PropertyConsumer'],
       },
     ]);
 

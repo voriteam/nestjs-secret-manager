@@ -3,6 +3,7 @@ import {
   Controller,
   DynamicModule,
   Get,
+  Inject,
   Injectable,
   Logger,
   MiddlewareConsumer,
@@ -471,6 +472,33 @@ describe('SecretManagerModule (e2e)', () => {
           "  - payments-api-key (backend: memory, version: latest), needed by ConsumerService: Secret 'payments-api-key' not found in backend 'memory' (version: latest)",
         ].join('\n'),
       );
+    });
+
+    it('throws naming a class whose property injects a missing secret', async () => {
+      @Injectable()
+      class PropertyConsumer {
+        @Inject(secretAccessorToken('property-secret'))
+        readonly getKey!: SecretAccessor;
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        providers: [PropertyConsumer],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(error).toBeInstanceOf(SecretValidationError);
+      expect(
+        (error as SecretValidationError).failures.map(
+          ({ name, consumers }) => ({ name, consumers }),
+        ),
+      ).toEqual([{ name: 'property-secret', consumers: ['PropertyConsumer'] }]);
     });
 
     it('lists every failure with all of its consumers', async () => {
