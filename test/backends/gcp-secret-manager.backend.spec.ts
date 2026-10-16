@@ -1,3 +1,4 @@
+import packageJson from '../../package.json';
 import { GcpSecretManagerBackend } from '../../src';
 
 function moduleNotFound(message: string): NodeJS.ErrnoException {
@@ -15,7 +16,7 @@ describe('GcpSecretManagerBackend', () => {
     expect(new GcpSecretManagerBackend('my-project').name).toBe('gcp');
   });
 
-  it('loads without the optional peer and names it when a GCP backend is built', () => {
+  it('loads without the optional peer and names it, with its declared range, when a GCP backend is built', () => {
     jest.isolateModules(() => {
       jest.doMock('@google-cloud/secret-manager', () => {
         throw moduleNotFound(
@@ -27,7 +28,7 @@ describe('GcpSecretManagerBackend', () => {
       const pkg = require('../../src') as typeof import('../../src');
 
       expect(() => new pkg.GcpSecretManagerBackend('my-project')).toThrow(
-        'GcpSecretManagerBackend needs the optional peer dependency @google-cloud/secret-manager (^5 || ^6). Install it beside @vori/nestjs-secret-manager.',
+        `GcpSecretManagerBackend needs the optional peer dependency @google-cloud/secret-manager (${packageJson.peerDependencies['@google-cloud/secret-manager']}). Install it beside @vori/nestjs-secret-manager.`,
       );
     });
   });
