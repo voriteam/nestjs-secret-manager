@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
-import type { Tracer } from '@opentelemetry/api';
+import type { Span, Tracer } from '@opentelemetry/api';
 
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
 import type { SecretBackend } from './interfaces/secret-backend.interface';
@@ -187,7 +187,12 @@ export class SecretManagerService implements OnModuleInit {
       span.setAttribute('secret.backend', backend.name);
 
       try {
-        const value = await this.#getInternal(name, resolvedVersion, backend);
+        const value = await this.#getInternal(
+          name,
+          resolvedVersion,
+          backend,
+          span,
+        );
         span.setStatus({ code: SpanStatusCode.OK });
         return value;
       } catch (error) {
@@ -207,20 +212,26 @@ export class SecretManagerService implements OnModuleInit {
     name: string,
     version: string,
     backend: SecretBackend,
+    span: Span,
   ): Promise<string> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#stringCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        return cached;
-      }
-    }
+    const cached =
+      this.#options.cacheEnabled !== false
+        ? this.#stringCache.get(backend.name, name, version)
+        : undefined;
+    const cacheHit = cached !== undefined;
 
+    span.setAttribute('secret.cache_hit', cacheHit);
     this.#logger.log({
       msg: 'Fetching secret',
       backend: backend.name,
       name,
       version,
+      cacheHit,
     });
+
+    if (cached !== undefined) {
+      return cached;
+    }
 
     const value = await backend.get(name, version);
 
@@ -264,6 +275,7 @@ export class SecretManagerService implements OnModuleInit {
           name,
           resolvedVersion,
           backend,
+          span,
         );
         span.setStatus({ code: SpanStatusCode.OK });
         return value;
@@ -284,21 +296,27 @@ export class SecretManagerService implements OnModuleInit {
     name: string,
     version: string,
     backend: SecretBackend,
+    span: Span,
   ): Promise<Uint8Array> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#bytesCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        // Defensive copy — caller mutations must not corrupt the cache.
-        return new Uint8Array(cached);
-      }
-    }
+    const cached =
+      this.#options.cacheEnabled !== false
+        ? this.#bytesCache.get(backend.name, name, version)
+        : undefined;
+    const cacheHit = cached !== undefined;
 
+    span.setAttribute('secret.cache_hit', cacheHit);
     this.#logger.log({
       msg: 'Fetching secret bytes',
       backend: backend.name,
       name,
       version,
+      cacheHit,
     });
+
+    if (cached !== undefined) {
+      // Defensive copy — caller mutations must not corrupt the cache.
+      return new Uint8Array(cached);
+    }
 
     const value = await backend.getBytes(name, version);
 

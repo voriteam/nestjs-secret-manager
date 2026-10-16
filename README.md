@@ -457,5 +457,6 @@ Every secret fetch creates a `secret.get` span with the following attributes:
 | `secret.name`    | The name of the secret                       |
 | `secret.version` | The resolved version (e.g., `latest` or `3`) |
 | `secret.backend` | The backend used (e.g., `gcp`, `memory`)     |
+| `secret.cache_hit` | Whether the value came from the in-memory cache |
 
 Errors are recorded on the span and the span status is set to `ERROR`.
