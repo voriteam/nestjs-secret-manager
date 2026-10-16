@@ -157,6 +157,11 @@ SecretManagerModule.forRootAsync({
 
 `useExisting` and `useClass` (via the `SecretManagerOptionsFactory` interface) are also supported.
 
+### `forSkipLoading` — no secret access
+
+For CLI tools and environments without backend access, `forSkipLoading()` loads nothing and probes nothing at boot.
+Every read returns `{"_placeholder":true,"key":"<name>"}`, so code that parses a secret as JSON still starts.
+
 ## Decorator options
 
 ```typescript
