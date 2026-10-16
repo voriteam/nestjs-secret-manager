@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import {
@@ -6,6 +7,7 @@ import {
   SecretNotFoundError,
 } from '../src';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from '../src/testing';
+import { CountingBackend } from './support/counting-backend';
 
 describe('SecretManagerService', () => {
   let service: SecretManagerService;
@@ -305,4 +307,115 @@ describe('SecretManagerService cacheTTL defaults', () => {
       ).toThrow(/Invalid cacheTTL/);
     },
   );
+});
+
+describe('SecretManagerService concurrent reads', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('makes one backend call for ten concurrent reads of a cold key', async () => {
+    const backend = new CountingBackend({ 'api-key': 'value' });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+    });
+
+    const values = await Promise.all(
+      Array.from({ length: 10 }, () => service.get({ name: 'api-key' })),
+    );
+
+    expect(values).toEqual(Array(10).fill('value'));
+    expect(backend.calls).toEqual([['get', 'api-key', 'latest']]);
+  });
+
+  it('shares a rejected fetch with its joiners and retries on the next call', async () => {
+    const backend = new CountingBackend();
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+    });
+
+    const settled = await Promise.allSettled(
+      Array.from({ length: 3 }, () => service.get({ name: 'api-key' })),
+    );
+    expect(settled.map(({ status }) => status)).toEqual([
+      'rejected',
+      'rejected',
+      'rejected',
+    ]);
+    expect(backend.calls).toEqual([['get', 'api-key', 'latest']]);
+
+    backend.set('api-key', 'value');
+
+    await expect(service.get({ name: 'api-key' })).resolves.toBe('value');
+    expect(backend.calls).toEqual([
+      ['get', 'api-key', 'latest'],
+      ['get', 'api-key', 'latest'],
+    ]);
+  });
+
+  it('does not cache a fetch that was in flight when clearCache ran', async () => {
+    class DeferredBackend extends InMemorySecretBackend {
+      readonly pending: ((value: string) => void)[] = [];
+
+      override get(): Promise<string> {
+        return new Promise((resolve) => this.pending.push(resolve));
+      }
+    }
+
+    const backend = new DeferredBackend();
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 0,
+    });
+
+    const beforeClear = service.get({ name: 'api-key' });
+    service.clearCache();
+    backend.pending[0]?.('stale');
+    await expect(beforeClear).resolves.toBe('stale');
+
+    const afterClear = service.get({ name: 'api-key' });
+    expect(backend.pending).toHaveLength(2);
+    backend.pending[1]?.('fresh');
+    await expect(afterClear).resolves.toBe('fresh');
+  });
+
+  it('logs each backend fetch at debug level and no cache hits', async () => {
+    const debug = jest
+      .spyOn(Logger.prototype, 'debug')
+      .mockImplementation(() => undefined);
+    const backend = new InMemorySecretBackend({ 'api-key': 'value' });
+    backend.set('api-key', 'v2', '2');
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+    });
+
+    await service.get({ name: 'api-key' });
+    await service.get({ name: 'api-key' });
+    await service.getBytes({ name: 'api-key', version: '2' });
+
+    expect(debug.mock.calls).toEqual([
+      [
+        {
+          msg: 'Fetching secret',
+          kind: 'string',
+          backend: 'memory',
+          name: 'api-key',
+          version: 'latest',
+        },
+      ],
+      [
+        {
+          msg: 'Fetching secret',
+          kind: 'bytes',
+          backend: 'memory',
+          name: 'api-key',
+          version: '2',
+        },
+      ],
+    ]);
+  });
 });

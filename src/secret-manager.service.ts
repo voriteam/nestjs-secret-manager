@@ -1,12 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { SECRET_MANAGER_OPTIONS } from './constants';
+import { SECRET_MANAGER_OPTIONS, SecretKind } from './constants';
 import type { SecretBackend } from './interfaces/secret-backend.interface';
 import type { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
-import { SecretCache } from './secret-cache';
-
-/** Default cache TTL when none is configured: 15 minutes. */
-const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
+import { SecretAddress, SecretCache, cachePolicyFrom } from './secret-cache';
 
 const REDACTED = '[SecretManagerService redacted]';
 
@@ -15,6 +12,7 @@ const REDACTED = '[SecretManagerService redacted]';
  *
  * Features:
  * - Cache-first lookup to minimize backend calls
+ * - Concurrent reads of one secret share a single backend fetch
  * - Multiple backend support
  *
  * Internal state (backends map, cache, options) is held in JS `#private`
@@ -34,29 +32,13 @@ export class SecretManagerService {
     @Inject(SECRET_MANAGER_OPTIONS) options: SecretManagerModuleOptions,
   ) {
     this.#options = options;
-    const ttl = this.#resolveCacheTtl(options);
-    this.#stringCache = new SecretCache<string>(ttl);
-    this.#bytesCache = new SecretCache<Uint8Array>(ttl);
+    const policy = cachePolicyFrom(options);
+    this.#stringCache = new SecretCache<string>(policy);
+    this.#bytesCache = new SecretCache<Uint8Array>(
+      policy,
+      (bytes) => new Uint8Array(bytes),
+    );
     this.#initializeBackends();
-  }
-
-  #resolveCacheTtl(options: SecretManagerModuleOptions): number | undefined {
-    if (options.cacheEnabled === false) {
-      return undefined;
-    }
-    if (options.cacheTTL === undefined) {
-      return DEFAULT_CACHE_TTL_MS;
-    }
-    // Treat explicit 0 as "never expire" — the documented escape hatch.
-    if (options.cacheTTL === 0) {
-      return undefined;
-    }
-    if (!Number.isFinite(options.cacheTTL) || options.cacheTTL < 0) {
-      throw new Error(
-        `Invalid cacheTTL: ${options.cacheTTL}. Must be a non-negative finite number (or 0 / undefined).`,
-      );
-    }
-    return options.cacheTTL;
   }
 
   #initializeBackends(): void {
@@ -100,52 +82,25 @@ export class SecretManagerService {
    * @param options.backend - Optional backend name (uses the configured default if omitted)
    * @returns The secret value
    */
-  public async get(options: {
+  public async get({
+    name,
+    version = 'latest',
+    backend,
+  }: {
     name: string;
     version?: string;
     backend?: string;
   }): Promise<string> {
-    const { name, version, backend: backendName } = options;
-
     if (this.#options.skipLoading) {
       return `SECRET_NOT_LOADED:${name}`;
     }
 
-    const backend = this.#getBackend(backendName);
-    const resolvedVersion = version ?? 'latest';
-
-    return await this.#getInternal(name, resolvedVersion, backend);
-  }
-
-  async #getInternal(
-    name: string,
-    version: string,
-    backend: SecretBackend,
-  ): Promise<string> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#stringCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret: ${name}`);
-        }
-        return cached;
-      }
-    }
-
-    this.#logger.log({
-      msg: 'Fetching secret',
-      backend: backend.name,
-      name,
-      version,
+    const source = this.#getBackend(backend);
+    const address = { backend: source.name, name, version };
+    return await this.#stringCache.read(address, () => {
+      this.#logFetch(SecretKind.String, address);
+      return source.get(name, version);
     });
-
-    const value = await backend.get(name, version);
-
-    if (this.#options.cacheEnabled !== false) {
-      this.#stringCache.set(backend.name, name, value, version);
-    }
-
-    return value;
   }
 
   /**
@@ -171,55 +126,25 @@ export class SecretManagerService {
    * @param options.backend - Optional backend name (uses the configured default if omitted)
    * @returns The secret value as a Uint8Array
    */
-  public async getBytes(options: {
+  public async getBytes({
+    name,
+    version = 'latest',
+    backend,
+  }: {
     name: string;
     version?: string;
     backend?: string;
   }): Promise<Uint8Array> {
-    const { name, version, backend: backendName } = options;
-
     if (this.#options.skipLoading) {
       return new TextEncoder().encode(`SECRET_NOT_LOADED:${name}`);
     }
 
-    const backend = this.#getBackend(backendName);
-    const resolvedVersion = version ?? 'latest';
-
-    return await this.#getBytesInternal(name, resolvedVersion, backend);
-  }
-
-  async #getBytesInternal(
-    name: string,
-    version: string,
-    backend: SecretBackend,
-  ): Promise<Uint8Array> {
-    if (this.#options.cacheEnabled !== false) {
-      const cached = this.#bytesCache.get(backend.name, name, version);
-      if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret bytes: ${name}`);
-        }
-        // Defensive copy — caller mutations must not corrupt the cache.
-        return new Uint8Array(cached);
-      }
-    }
-
-    this.#logger.log({
-      msg: 'Fetching secret bytes',
-      backend: backend.name,
-      name,
-      version,
+    const source = this.#getBackend(backend);
+    const address = { backend: source.name, name, version };
+    return await this.#bytesCache.read(address, () => {
+      this.#logFetch(SecretKind.Bytes, address);
+      return source.getBytes(name, version);
     });
-
-    const value = await backend.getBytes(name, version);
-
-    if (this.#options.cacheEnabled !== false) {
-      // Store our own copy so a subsequent backend.getBytes mutation, or
-      // shared-reference shenanigans from a custom backend, can't reach in.
-      this.#bytesCache.set(backend.name, name, new Uint8Array(value), version);
-    }
-
-    return value;
   }
 
   /**
@@ -261,8 +186,14 @@ export class SecretManagerService {
     return backend;
   }
 
+  /** Logged from inside the loader, so only a read that reaches the backend logs. */
+  #logFetch(kind: SecretKind, address: SecretAddress): void {
+    this.#logger.debug({ msg: 'Fetching secret', kind, ...address });
+  }
+
   /**
-   * Clear the secret cache (both string and bytes views).
+   * Clear the secret cache (both string and bytes views). A fetch already in
+   * flight still answers its callers but is not cached.
    */
   public clearCache(): void {
     this.#stringCache.clear();

@@ -1,106 +1,145 @@
-interface CacheEntry<T> {
-  value: T;
-  cachedAt: number;
-}
+import type { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
 
 const REDACTED = '[SecretCache redacted]';
 
+const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
+
+export enum CacheRetention {
+  /** `cacheEnabled: false`. Keep nothing once a fetch settles. */
+  Never = 'never',
+  /** `cacheTTL: 0`. */
+  Forever = 'forever',
+  Ttl = 'ttl',
+}
+
+export type CachePolicy =
+  | { readonly retention: CacheRetention.Never }
+  | { readonly retention: CacheRetention.Forever }
+  | { readonly retention: CacheRetention.Ttl; readonly ttlMs: number };
+
+/** @throws on a negative, NaN or infinite `cacheTTL`. */
+export function cachePolicyFrom({
+  cacheEnabled,
+  cacheTTL,
+}: Pick<SecretManagerModuleOptions, 'cacheEnabled' | 'cacheTTL'>): CachePolicy {
+  if (cacheEnabled === false) {
+    return { retention: CacheRetention.Never };
+  }
+  if (cacheTTL === undefined) {
+    return { retention: CacheRetention.Ttl, ttlMs: DEFAULT_CACHE_TTL_MS };
+  }
+  if (cacheTTL === 0) {
+    return { retention: CacheRetention.Forever };
+  }
+  if (!Number.isFinite(cacheTTL) || cacheTTL < 0) {
+    throw new Error(
+      `Invalid cacheTTL: ${cacheTTL}. Must be a non-negative finite number (or 0 / undefined).`,
+    );
+  }
+  return { retention: CacheRetention.Ttl, ttlMs: cacheTTL };
+}
+
+/** A fully resolved read, with no defaults left to apply. */
+export interface SecretAddress {
+  readonly backend: string;
+  readonly name: string;
+  readonly version: string;
+}
+
+interface CacheEntry<T> {
+  readonly value: T;
+  readonly cachedAt: number;
+}
+
 /**
- * In-memory cache for secrets.
- * Uses a composite key of backend:name:version for cache entries.
+ * Settled values and in-flight fetches for one payload kind, under one key.
  *
- * The internal Map is held as a JS `#private` field so it cannot be reached
- * via property access on the instance, and `toJSON` / `util.inspect.custom`
- * are overridden to redact contents in case the cache (or its containing
- * service) is accidentally serialized by a logger or error reporter.
+ * - Concurrent misses on one address share one `load`, under any retention.
+ * - A rejected load reaches every caller that joined it and is never stored,
+ *   so the next read fetches again.
+ * - A load that started before `clear()` still answers its callers but
+ *   cannot store, and reads after `clear()` start a new load.
+ *
+ * State lives in JS `#private` fields, and `toJSON` / `util.inspect.custom`
+ * redact the instance, so a logger that serializes the cache or its owner
+ * prints no secret.
  */
-export class SecretCache<T = string> {
-  readonly #cache = new Map<string, CacheEntry<T>>();
-  readonly #ttlMs?: number;
-
-  constructor(ttlMs?: number) {
-    this.#ttlMs = ttlMs;
-  }
-
-  /**
-   * Generate a cache key from backend, name, and version.
-   */
-  private getCacheKey(backend: string, name: string, version?: string): string {
-    return `${backend}:${name}:${version ?? 'latest'}`;
-  }
+export class SecretCache<T> {
+  readonly #policy: CachePolicy;
+  readonly #copy: (value: T) => T;
+  readonly #values = new Map<string, CacheEntry<T>>();
+  readonly #inFlight = new Map<string, Promise<T>>();
+  #generation = 0;
 
   /**
-   * Get a cached secret value.
-   *
-   * @returns The cached value, or undefined if not found or expired.
+   * @param copy - Applied to a fetched value before it is stored, and again
+   *   for every caller, so no two callers, and no caller and the cache, hold
+   *   the same mutable value.
    */
-  get(backend: string, name: string, version?: string): T | undefined {
-    const key = this.getCacheKey(backend, name, version);
-    const entry = this.#cache.get(key);
+  constructor(policy: CachePolicy, copy: (value: T) => T = (value) => value) {
+    this.#policy = policy;
+    this.#copy = copy;
+  }
 
-    if (!entry) {
-      return undefined;
+  async read(address: SecretAddress, load: () => Promise<T>): Promise<T> {
+    const key = `${address.backend}:${address.name}:${address.version}`;
+    const hit = this.#fresh(key);
+    if (hit !== undefined) {
+      return this.#copy(hit);
     }
 
+    let pending = this.#inFlight.get(key);
+    if (pending === undefined) {
+      const generation = this.#generation;
+      const fetched = (async () => {
+        const owned = this.#copy(await load());
+        if (generation === this.#generation) {
+          this.#store(key, owned);
+        }
+        return owned;
+      })().finally(() => {
+        // After clear(), a newer load may hold this key.
+        if (this.#inFlight.get(key) === fetched) {
+          this.#inFlight.delete(key);
+        }
+      });
+      this.#inFlight.set(key, fetched);
+      pending = fetched;
+    }
+    return this.#copy(await pending);
+  }
+
+  clear(): void {
+    this.#values.clear();
+    this.#inFlight.clear();
+    this.#generation += 1;
+  }
+
+  #fresh(key: string): T | undefined {
+    const entry = this.#values.get(key);
+    if (entry === undefined) {
+      return undefined;
+    }
     if (
-      this.#ttlMs !== undefined &&
-      Date.now() - entry.cachedAt > this.#ttlMs
+      this.#policy.retention === CacheRetention.Ttl &&
+      Date.now() - entry.cachedAt > this.#policy.ttlMs
     ) {
-      this.#cache.delete(key);
+      this.#values.delete(key);
       return undefined;
     }
-
     return entry.value;
   }
 
-  /**
-   * Set a cached secret value.
-   */
-  set(backend: string, name: string, value: T, version?: string): void {
-    const key = this.getCacheKey(backend, name, version);
-    this.#cache.set(key, {
-      value,
-      cachedAt: Date.now(),
-    });
+  #store(key: string, value: T): void {
+    if (this.#policy.retention !== CacheRetention.Never) {
+      this.#values.set(key, { value, cachedAt: Date.now() });
+    }
   }
 
-  /**
-   * Check if a secret is cached and not expired.
-   */
-  has(backend: string, name: string, version?: string): boolean {
-    return this.get(backend, name, version) !== undefined;
-  }
-
-  /**
-   * Delete a specific cached secret.
-   *
-   * @returns True if the entry was deleted.
-   */
-  delete(backend: string, name: string, version?: string): boolean {
-    const key = this.getCacheKey(backend, name, version);
-    return this.#cache.delete(key);
-  }
-
-  /**
-   * Clear all cached secrets.
-   */
-  clear(): void {
-    this.#cache.clear();
-  }
-
-  /**
-   * Get the number of cached entries.
-   */
-  get size(): number {
-    return this.#cache.size;
-  }
-
-  /** Redact when serialized via JSON. */
   toJSON(): string {
     return REDACTED;
   }
 
-  /** Redact when inspected by util.inspect / console.log / pino / winston. */
   [Symbol.for('nodejs.util.inspect.custom')](): string {
     return REDACTED;
   }

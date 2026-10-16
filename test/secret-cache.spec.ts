@@ -1,94 +1,194 @@
-import { SecretCache } from '../src/secret-cache';
+import { CacheRetention, SecretCache } from '../src/secret-cache';
+import type { CachePolicy } from '../src/secret-cache';
+
+const address = { backend: 'gcp', name: 'api-key', version: 'latest' };
+const forever: CachePolicy = { retention: CacheRetention.Forever };
+const never: CachePolicy = { retention: CacheRetention.Never };
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 describe('SecretCache', () => {
-  let cache: SecretCache;
+  describe('read', () => {
+    it('loads on a miss and serves the stored value afterwards', async () => {
+      const cache = new SecretCache<string>(forever);
+      const loads: string[] = [];
 
-  beforeEach(() => {
-    cache = new SecretCache();
-  });
+      const first = await cache.read(address, async () => {
+        loads.push('first');
+        return 'v1';
+      });
+      const second = await cache.read(address, async () => {
+        loads.push('second');
+        return 'v2';
+      });
 
-  describe('get/set', () => {
-    it('should store and retrieve a secret', () => {
-      cache.set('gcp', 'api-key', 'secret-value');
-      expect(cache.get('gcp', 'api-key')).toBe('secret-value');
+      expect([first, second]).toEqual(['v1', 'v1']);
+      expect(loads).toEqual(['first']);
     });
 
-    it('should return undefined for non-existent secrets', () => {
-      expect(cache.get('gcp', 'non-existent')).toBeUndefined();
+    it('keeps backends, names and versions apart', async () => {
+      const cache = new SecretCache<string>(forever);
+      const addresses = [
+        address,
+        { ...address, backend: 'memory' },
+        { ...address, name: 'other' },
+        { ...address, version: '2' },
+      ];
+
+      for (const [i, a] of addresses.entries()) {
+        await cache.read(a, async () => `value-${i}`);
+      }
+      const values = await Promise.all(
+        addresses.map((a) => cache.read(a, async () => 'reloaded')),
+      );
+
+      expect(values).toEqual(['value-0', 'value-1', 'value-2', 'value-3']);
     });
 
-    it('should handle different backends separately', () => {
-      cache.set('gcp', 'api-key', 'gcp-value');
-      cache.set('memory', 'api-key', 'memory-value');
+    it.each([
+      ['Forever', forever],
+      ['Never', never],
+    ])('shares one load among concurrent misses (%s)', async (_, policy) => {
+      const cache = new SecretCache<string>(policy);
+      let loads = 0;
 
-      expect(cache.get('gcp', 'api-key')).toBe('gcp-value');
-      expect(cache.get('memory', 'api-key')).toBe('memory-value');
+      const values = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          cache.read(address, async () => {
+            loads += 1;
+            return 'value';
+          }),
+        ),
+      );
+
+      expect(values).toEqual(Array(5).fill('value'));
+      expect(loads).toBe(1);
     });
 
-    it('should handle different versions separately', () => {
-      cache.set('gcp', 'api-key', 'v1-value', '1');
-      cache.set('gcp', 'api-key', 'v2-value', '2');
-      cache.set('gcp', 'api-key', 'latest-value');
+    it('stores nothing under Never retention', async () => {
+      const cache = new SecretCache<string>(never);
+      const loads: string[] = [];
 
-      expect(cache.get('gcp', 'api-key', '1')).toBe('v1-value');
-      expect(cache.get('gcp', 'api-key', '2')).toBe('v2-value');
-      expect(cache.get('gcp', 'api-key')).toBe('latest-value');
+      await cache.read(address, async () => {
+        loads.push('first');
+        return 'v1';
+      });
+      const second = await cache.read(address, async () => {
+        loads.push('second');
+        return 'v2';
+      });
+
+      expect(second).toBe('v2');
+      expect(loads).toEqual(['first', 'second']);
     });
 
-    it('should default version to latest', () => {
-      cache.set('gcp', 'api-key', 'latest-value');
-      expect(cache.get('gcp', 'api-key', 'latest')).toBe('latest-value');
-      expect(cache.get('gcp', 'api-key')).toBe('latest-value');
-    });
-  });
+    it('rejects every joiner of a failed load and never stores the failure', async () => {
+      const cache = new SecretCache<string>(forever);
+      let loads = 0;
+      const failing = async (): Promise<string> => {
+        loads += 1;
+        throw new Error('backend down');
+      };
 
-  describe('has', () => {
-    it('should return true for cached secrets', () => {
-      cache.set('gcp', 'api-key', 'value');
-      expect(cache.has('gcp', 'api-key')).toBe(true);
-    });
+      const settled = await Promise.allSettled([
+        cache.read(address, failing),
+        cache.read(address, failing),
+      ]);
 
-    it('should return false for non-existent secrets', () => {
-      expect(cache.has('gcp', 'non-existent')).toBe(false);
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete a cached secret', () => {
-      cache.set('gcp', 'api-key', 'value');
-      expect(cache.delete('gcp', 'api-key')).toBe(true);
-      expect(cache.get('gcp', 'api-key')).toBeUndefined();
+      expect(settled).toEqual([
+        { status: 'rejected', reason: new Error('backend down') },
+        { status: 'rejected', reason: new Error('backend down') },
+      ]);
+      expect(loads).toBe(1);
+      await expect(cache.read(address, async () => 'recovered')).resolves.toBe(
+        'recovered',
+      );
     });
 
-    it('should return false when deleting non-existent secret', () => {
-      expect(cache.delete('gcp', 'non-existent')).toBe(false);
+    it('turns a synchronous throw from load into a rejection', async () => {
+      const cache = new SecretCache<string>(forever);
+
+      await expect(
+        cache.read(address, () => {
+          throw new Error('sync failure');
+        }),
+      ).rejects.toThrow('sync failure');
+      await expect(cache.read(address, async () => 'next')).resolves.toBe(
+        'next',
+      );
+    });
+
+    it('hands every caller its own copy and keeps the stored copy private', async () => {
+      const cache = new SecretCache<Uint8Array>(
+        forever,
+        (bytes) => new Uint8Array(bytes),
+      );
+      const source = new Uint8Array([1, 2, 3]);
+
+      const [x, y] = await Promise.all([
+        cache.read(address, async () => source),
+        cache.read(address, async () => source),
+      ]);
+      x.fill(0);
+      source.fill(9);
+
+      expect([...y]).toEqual([1, 2, 3]);
+      expect([
+        ...(await cache.read(address, async () => new Uint8Array())),
+      ]).toEqual([1, 2, 3]);
     });
   });
 
   describe('clear', () => {
-    it('should clear all cached secrets', () => {
-      cache.set('gcp', 'key1', 'value1');
-      cache.set('gcp', 'key2', 'value2');
-      cache.set('memory', 'key3', 'value3');
+    it('empties stored values', async () => {
+      const cache = new SecretCache<string>(forever);
+      await cache.read(address, async () => 'v1');
 
       cache.clear();
 
-      expect(cache.get('gcp', 'key1')).toBeUndefined();
-      expect(cache.get('gcp', 'key2')).toBeUndefined();
-      expect(cache.get('memory', 'key3')).toBeUndefined();
-      expect(cache.size).toBe(0);
+      await expect(cache.read(address, async () => 'v2')).resolves.toBe('v2');
     });
-  });
 
-  describe('size', () => {
-    it('should return the number of cached entries', () => {
-      expect(cache.size).toBe(0);
+    it('lets an earlier load answer its callers without storing or evicting a newer load', async () => {
+      const cache = new SecretCache<string>(forever);
+      const beforeLoad = deferred<string>();
+      const afterLoad = deferred<string>();
+      let loads = 0;
 
-      cache.set('gcp', 'key1', 'value1');
-      expect(cache.size).toBe(1);
+      const before = cache.read(address, () => {
+        loads += 1;
+        return beforeLoad.promise;
+      });
+      cache.clear();
+      const after = cache.read(address, () => {
+        loads += 1;
+        return afterLoad.promise;
+      });
 
-      cache.set('gcp', 'key2', 'value2');
-      expect(cache.size).toBe(2);
+      beforeLoad.resolve('stale');
+      await expect(before).resolves.toBe('stale');
+
+      const joiner = cache.read(address, async () => {
+        loads += 1;
+        return 'third';
+      });
+      afterLoad.resolve('fresh');
+
+      await expect(after).resolves.toBe('fresh');
+      await expect(joiner).resolves.toBe('fresh');
+      await expect(cache.read(address, async () => 'unused')).resolves.toBe(
+        'fresh',
+      );
+      expect(loads).toBe(2);
     });
   });
 
@@ -101,64 +201,46 @@ describe('SecretCache', () => {
       jest.useRealTimers();
     });
 
-    it('should expire entries after TTL', () => {
-      const ttlCache = new SecretCache(1000); // 1 second TTL
+    it('reloads once an entry is older than the TTL', async () => {
+      const cache = new SecretCache<string>({
+        retention: CacheRetention.Ttl,
+        ttlMs: 1000,
+      });
+      await cache.read(address, async () => 'v1');
 
-      ttlCache.set('gcp', 'api-key', 'value');
-      expect(ttlCache.get('gcp', 'api-key')).toBe('value');
+      jest.advanceTimersByTime(1000);
+      const withinTtl = await cache.read(address, async () => 'v2');
+      jest.advanceTimersByTime(1);
+      const pastTtl = await cache.read(address, async () => 'v3');
 
-      // Advance time past TTL
-      jest.advanceTimersByTime(1001);
-
-      expect(ttlCache.get('gcp', 'api-key')).toBeUndefined();
-    });
-
-    it('should not expire entries before TTL', () => {
-      const ttlCache = new SecretCache(1000);
-
-      ttlCache.set('gcp', 'api-key', 'value');
-
-      // Advance time but not past TTL
-      jest.advanceTimersByTime(500);
-
-      expect(ttlCache.get('gcp', 'api-key')).toBe('value');
-    });
-
-    it('should not expire entries when TTL is undefined', () => {
-      cache.set('gcp', 'api-key', 'value');
-
-      // Advance time significantly
-      jest.advanceTimersByTime(1000000);
-
-      expect(cache.get('gcp', 'api-key')).toBe('value');
+      expect([withinTtl, pastTtl]).toEqual(['v1', 'v3']);
     });
   });
 
   describe('redaction', () => {
-    it('toJSON returns a redacted placeholder', () => {
-      cache.set('gcp', 'api-key', 'super-secret-value');
-      const serialized = JSON.stringify({ cache });
-      expect(serialized).toBe('{"cache":"[SecretCache redacted]"}');
-      expect(serialized).not.toContain('super-secret-value');
+    it('toJSON returns a redacted placeholder', async () => {
+      const cache = new SecretCache<string>(forever);
+      await cache.read(address, async () => 'super-secret-value');
+
+      expect(JSON.stringify({ cache })).toBe(
+        '{"cache":"[SecretCache redacted]"}',
+      );
     });
 
-    it('util.inspect.custom hides contents from console.log / loggers', () => {
-      cache.set('gcp', 'api-key', 'super-secret-value');
+    it('util.inspect.custom hides contents from console.log / loggers', async () => {
+      const cache = new SecretCache<string>(forever);
+      await cache.read(address, async () => 'super-secret-value');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { inspect } = require('node:util') as typeof import('node:util');
-      const inspected = inspect(cache);
-      expect(inspected).toBe('[SecretCache redacted]');
-      expect(inspected).not.toContain('super-secret-value');
+
+      expect(inspect(cache)).toBe('[SecretCache redacted]');
     });
 
-    it('the underlying cache field is unreachable as a property', () => {
-      cache.set('gcp', 'api-key', 'super-secret-value');
-      // The TS-private `cache` was migrated to a JS `#private` field,
-      // so it isn't visible in Object.keys / for-in / property access.
-      expect(Object.keys(cache)).not.toContain('cache');
-      expect(
-        (cache as unknown as Record<string, unknown>).cache,
-      ).toBeUndefined();
+    it('exposes no enumerable state', async () => {
+      const cache = new SecretCache<string>(forever);
+      await cache.read(address, async () => 'super-secret-value');
+
+      expect(Object.keys(cache)).toEqual([]);
     });
   });
 });

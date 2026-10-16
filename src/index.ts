@@ -39,6 +39,3 @@ export type { SecretValidationFailure } from './errors/secret-validation.error';
 // Backends
 export { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';
 export { InMemorySecretBackend } from './backends/in-memory.backend';
-
-// Cache (for advanced use cases)
-export { SecretCache } from './secret-cache';
