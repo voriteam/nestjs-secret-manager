@@ -1,6 +1,6 @@
 import { Inject } from '@nestjs/common';
 
-import { secretRegistry } from '../constants';
+import { SecretKind, secretRegistry } from '../constants';
 import { InjectSecretOptions } from '../interfaces/secret-manager-options.interface';
 
 /**
@@ -19,7 +19,7 @@ export type SecretAccessor = () => Promise<string>;
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
  * (cache-first). Startup validation still applies — the secret is probed at
- * boot if `validateOnStartup` is enabled — so misconfigured access fails
+ * boot unless `startupValidation` is `Off` — so misconfigured access fails
  * fast even though no value is stored on the consumer.
  *
  * @example
@@ -45,7 +45,7 @@ export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, 'string');
+  const requirement = secretRegistry.register(name, options, SecretKind.String);
   return Inject(requirement.token);
 }
 
@@ -86,6 +86,6 @@ export function InjectSecretBytes(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, 'bytes');
+  const requirement = secretRegistry.register(name, options, SecretKind.Bytes);
   return Inject(requirement.token);
 }
