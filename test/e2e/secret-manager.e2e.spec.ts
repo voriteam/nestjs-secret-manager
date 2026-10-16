@@ -381,7 +381,6 @@ describe('SecretManagerModule (e2e)', () => {
 
     it('does not probe a decorated class the graph does not build', async () => {
       @Injectable()
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- declared only so its decorator registers the secret
       class UnwiredService {
         constructor(
           @InjectSecret('unwired-secret') readonly getKey: SecretAccessor,
@@ -408,6 +407,9 @@ describe('SecretManagerModule (e2e)', () => {
 
       await moduleRef.init();
 
+      expect(() => moduleRef.get(UnwiredService)).toThrow(
+        'Nest could not find UnwiredService element',
+      );
       expect(
         secretRegistry.get('SECRET_default_unwired-secret_latest'),
       ).toEqual({

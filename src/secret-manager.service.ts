@@ -7,10 +7,6 @@ import { SecretAddress, SecretCache, cachePolicyFrom } from './secret-cache';
 
 const REDACTED = '[SecretManagerService redacted]';
 
-/**
- * Every read's value under `skipLoading`. JSON, so a consumer that parses its
- * secret at construction still boots.
- */
 function skipLoadingPlaceholder(name: string): string {
   return JSON.stringify({ _placeholder: true, key: name });
 }
@@ -166,7 +162,6 @@ export class SecretManagerService {
     return backend;
   }
 
-  /** Logged from inside the loader, so only a read that reaches the backend logs. */
   #logFetch(kind: SecretKind, address: SecretAddress): void {
     this.#logger.debug({ msg: 'Fetching secret', kind, ...address });
   }

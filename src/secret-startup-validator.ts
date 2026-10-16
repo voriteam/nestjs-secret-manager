@@ -15,12 +15,6 @@ import { SecretManagerService } from './secret-manager.service';
 const STARTUP_VALIDATION_MODES: readonly string[] =
   Object.values(StartupValidation);
 
-/**
- * Probes, at boot, every secret the built graph injects. A provider of its
- * own rather than part of SecretManagerService, so the service stays
- * constructible from options alone and overriding it in a test does not
- * silently drop validation.
- */
 @Injectable()
 export class SecretStartupValidator implements OnModuleInit {
   readonly #logger = new Logger(SecretStartupValidator.name);

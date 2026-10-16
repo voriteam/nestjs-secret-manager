@@ -4,10 +4,6 @@ import { SecretAccessDeniedError } from '../errors/secret-access-denied.error';
 import { SecretNotFoundError } from '../errors/secret-not-found.error';
 import { SecretBackend } from '../interfaces/secret-backend.interface';
 
-/**
- * The one client call this backend makes. The clients of both supported
- * majors (5.x and 6.x) satisfy it.
- */
 interface SecretVersionClient {
   accessSecretVersion(request: {
     name: string;
@@ -18,12 +14,6 @@ interface SecretVersionClient {
 
 const GCP_PEER = '@google-cloud/secret-manager';
 
-/**
- * Loads the optional peer when a GCP backend is constructed, so an
- * application that never builds one does not need it installed. The
- * `typeof import(...)` annotation is erased, so neither the emitted JS nor
- * the emitted typings reference the peer.
- */
 function loadSecretVersionClient(projectId: string): SecretVersionClient {
   let sdk: typeof import('@google-cloud/secret-manager');
   try {

@@ -1,6 +1,5 @@
 import { InMemorySecretBackend } from '../../src';
 
-/** An in-memory backend that records every fetch it serves. */
 export class CountingBackend extends InMemorySecretBackend {
   readonly calls: [
     method: 'get' | 'getBytes',

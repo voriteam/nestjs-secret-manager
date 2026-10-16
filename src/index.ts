@@ -1,16 +1,12 @@
-// Module
 export { SecretManagerModule } from './secret-manager.module';
 
-// Service
 export { SecretManagerService } from './secret-manager.service';
 
-// Registry and graph walk
 export { SecretKind } from './constants';
 export type { SecretRequirement } from './constants';
 export { collectInjectedSecrets } from './injected-secrets';
 export type { InjectedSecret } from './injected-secrets';
 
-// Decorators
 export {
   InjectSecret,
   InjectSecretBytes,
@@ -20,7 +16,6 @@ export type {
   SecretBytesAccessor,
 } from './decorators/inject-secret.decorator';
 
-// Interfaces
 export { StartupValidation } from './interfaces/secret-manager-options.interface';
 export type { SecretBackend } from './interfaces/secret-backend.interface';
 export type {
@@ -30,13 +25,11 @@ export type {
   InjectSecretOptions,
 } from './interfaces/secret-manager-options.interface';
 
-// Errors
 export { SecretNotFoundError } from './errors/secret-not-found.error';
 export { SecretAccessDeniedError } from './errors/secret-access-denied.error';
 export { SecretValidationError } from './errors/secret-validation.error';
 export type { SecretValidationFailure } from './errors/secret-validation.error';
 
-// Backends
 export { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';
 export { InMemorySecretBackend } from './backends/in-memory.backend';
 export type { InMemorySecretBackendOptions } from './backends/in-memory.backend';

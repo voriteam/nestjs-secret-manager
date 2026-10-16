@@ -23,8 +23,7 @@ type InstanceWrapper =
 
 /**
  * The secrets this graph injects. It reads metadata only, instantiates
- * nothing and runs no hooks, so a preview-mode graph and a booted one give the
- * same answer.
+ * nothing and runs no hooks, so it works on a preview-mode graph.
  *
  * Walks every module's providers, controllers, injectables (the guards,
  * interceptors, pipes and filters Nest builds for the module) and

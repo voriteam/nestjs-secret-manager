@@ -5,9 +5,7 @@ const REDACTED = '[SecretCache redacted]';
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 export enum CacheRetention {
-  /** `cacheEnabled: false`. Keep nothing once a fetch settles. */
   Never = 'never',
-  /** `cacheTTL: 0`. */
   Forever = 'forever',
   Ttl = 'ttl',
 }
@@ -17,7 +15,6 @@ export type CachePolicy =
   | { readonly retention: CacheRetention.Forever }
   | { readonly retention: CacheRetention.Ttl; readonly ttlMs: number };
 
-/** @throws on a negative, NaN or infinite `cacheTTL`. */
 export function cachePolicyFrom({
   cacheEnabled,
   cacheTTL,
@@ -39,7 +36,6 @@ export function cachePolicyFrom({
   return { retention: CacheRetention.Ttl, ttlMs: cacheTTL };
 }
 
-/** A fully resolved read, with no defaults left to apply. */
 export interface SecretAddress {
   readonly backend: string;
   readonly name: string;
@@ -51,19 +47,6 @@ interface CacheEntry<T> {
   readonly cachedAt: number;
 }
 
-/**
- * Settled values and in-flight fetches for one payload kind, under one key.
- *
- * - Concurrent misses on one address share one `load`, under any retention.
- * - A rejected load reaches every caller that joined it and is never stored,
- *   so the next read fetches again.
- * - A load that started before `clear()` still answers its callers but
- *   cannot store, and reads after `clear()` start a new load.
- *
- * State lives in JS `#private` fields, and `toJSON` / `util.inspect.custom`
- * redact the instance, so a logger that serializes the cache or its owner
- * prints no secret.
- */
 export class SecretCache<T> {
   readonly #policy: CachePolicy;
   readonly #copy: (value: T) => T;
@@ -71,11 +54,6 @@ export class SecretCache<T> {
   readonly #inFlight = new Map<string, Promise<T>>();
   #generation = 0;
 
-  /**
-   * @param copy - Applied to a fetched value before it is stored, and again
-   *   for every caller, so no two callers, and no caller and the cache, hold
-   *   the same mutable value.
-   */
   constructor(policy: CachePolicy, copy: (value: T) => T = (value) => value) {
     this.#policy = policy;
     this.#copy = copy;
@@ -98,8 +76,8 @@ export class SecretCache<T> {
         }
         return owned;
       })().finally(() => {
-        // After clear(), a newer load may hold this key.
-        if (this.#inFlight.get(key) === fetched) {
+        const ownsKey = this.#inFlight.get(key) === fetched;
+        if (ownsKey) {
           this.#inFlight.delete(key);
         }
       });

@@ -19,7 +19,8 @@ export type SecretAccessor = () => Promise<string>;
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
  * (cache-first). When Nest builds the decorated class, startup validation
- * probes the secret at boot unless `startupValidation` is `Off`, so
+ * probes the secret at boot unless `startupValidation` is `Off` or loading
+ * is skipped, so
  * misconfigured access fails fast even though no value is stored on the
  * consumer.
  *

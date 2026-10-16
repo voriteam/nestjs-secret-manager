@@ -130,11 +130,6 @@ export class SecretManagerModule {
     return this.forRoot({ skipLoading: true });
   }
 
-  /**
-   * Assembles every variant: the options providers, the service, the startup
-   * validator, and one accessor provider per secret registered by the time
-   * this runs. Exports the service and the accessors.
-   */
   private static build(
     optionsProviders: Provider[],
     imports: ModuleMetadata['imports'] = [],

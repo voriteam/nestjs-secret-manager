@@ -62,7 +62,6 @@ export class InMemorySecretBackend implements SecretBackend {
   private getRaw(name: string, version?: string): Uint8Array {
     const value = this.secrets.get(name)?.get(version ?? 'latest');
     if (value !== undefined) {
-      // Defensive copy — callers must not be able to mutate stored values.
       return new Uint8Array(value);
     }
     if (this.fallback) {
