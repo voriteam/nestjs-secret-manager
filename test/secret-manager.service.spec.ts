@@ -292,6 +292,22 @@ describe('SecretManagerService cacheTTL defaults', () => {
     expect(await service.get({ name: 'api-key' })).toBe('v2');
   });
 
+  it('expires entries after an explicit cacheTTL', async () => {
+    const backend = new InMemorySecretBackend({ 'api-key': 'v1' });
+    const service = new SecretManagerService({
+      defaultBackend: 'memory',
+      backends: [backend],
+      cacheTTL: 1000,
+    });
+
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+    backend.set('api-key', 'v2');
+    jest.advanceTimersByTime(1000);
+    expect(await service.get({ name: 'api-key' })).toBe('v1');
+    jest.advanceTimersByTime(1);
+    expect(await service.get({ name: 'api-key' })).toBe('v2');
+  });
+
   it('treats cacheTTL: 0 as never-expire (escape hatch)', async () => {
     const backend = new InMemorySecretBackend({ 'api-key': 'v1' });
     const service = new SecretManagerService({

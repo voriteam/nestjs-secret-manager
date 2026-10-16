@@ -460,6 +460,40 @@ describe('SecretManagerModule (e2e)', () => {
       );
     });
 
+    it('reports the version and backend a consumer pinned', async () => {
+      @Injectable()
+      class VaultClient {
+        constructor(
+          @InjectSecret('vault-token', { version: '3', backend: 'vault' })
+          readonly getToken: SecretAccessor,
+        ) {}
+      }
+
+      const vault = new InMemorySecretBackend();
+      Object.defineProperty(vault, 'name', { value: 'vault' });
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend(), vault],
+          }),
+        ],
+        providers: [VaultClient],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect((error as SecretValidationError).failures).toEqual([
+        {
+          name: 'vault-token',
+          version: '3',
+          backend: 'vault',
+          consumers: ['VaultClient'],
+          error: new SecretNotFoundError('vault-token', 'vault', '3'),
+        },
+      ]);
+    });
+
     it('marks a failed bytes injection in the message', async () => {
       @Injectable()
       class TokenSigner {

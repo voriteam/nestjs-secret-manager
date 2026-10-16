@@ -37,7 +37,8 @@ export interface SecretManagerModuleOptions {
   backends?: SecretBackend[];
 
   /**
-   * Whether to enable in-memory caching of secrets.
+   * Whether to enable in-memory caching of secrets. When disabled, concurrent
+   * reads of one secret still share a single backend fetch.
    * @default true
    */
   cacheEnabled?: boolean;
