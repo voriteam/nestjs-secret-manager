@@ -4,8 +4,6 @@
     "module": "node16",
     "lib": ["ES2023"],
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
     "outDir": "./dist",
     "rootDir": ".",
     "strict": true,

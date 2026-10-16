@@ -211,9 +211,6 @@ export class SecretManagerService implements OnModuleInit {
     if (this.#options.cacheEnabled !== false) {
       const cached = this.#stringCache.get(backend.name, name, version);
       if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret: ${name}`);
-        }
         return cached;
       }
     }
@@ -232,20 +229,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret.
-   */
-  public async getLatest(options: {
-    name: string;
-    backend?: string;
-  }): Promise<string> {
-    return this.get({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**
@@ -305,9 +288,6 @@ export class SecretManagerService implements OnModuleInit {
     if (this.#options.cacheEnabled !== false) {
       const cached = this.#bytesCache.get(backend.name, name, version);
       if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret bytes: ${name}`);
-        }
         // Defensive copy — caller mutations must not corrupt the cache.
         return new Uint8Array(cached);
       }
@@ -329,20 +309,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret as raw bytes.
-   */
-  public async getLatestBytes(options: {
-    name: string;
-    backend?: string;
-  }): Promise<Uint8Array> {
-    return this.getBytes({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**
