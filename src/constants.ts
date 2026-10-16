@@ -16,26 +16,29 @@ export const SECRET_TOKEN_PREFIX = 'SECRET';
 export const SECRET_BYTES_TOKEN_PREFIX = 'SECRET_BYTES';
 
 /**
- * The two payload kinds a registered secret can be exposed as.
+ * How a consumer asked to receive a secret, through `@InjectSecret` (string)
+ * or `@InjectSecretBytes` (bytes).
  */
-export type SecretInjectionKind = 'string' | 'bytes';
-
-/**
- * Represents a registered secret requirement.
- */
-export interface SecretRequirement {
-  name: string;
-  version?: string;
-  backend?: string;
-  /** The injection token (kind-specific). */
-  token: string;
-  /** Whether the consumer requested a string accessor or a bytes accessor. */
-  kind: SecretInjectionKind;
+export enum SecretKind {
+  String = 'string',
+  Bytes = 'bytes',
 }
 
 /**
- * Registry of all secrets that need to be validated at startup
- * and provided as injectable dependencies.
+ * One `@InjectSecret` / `@InjectSecretBytes` declaration.
+ */
+export interface SecretRequirement {
+  readonly name: string;
+  readonly version?: string;
+  readonly backend?: string;
+  /** The injection token (kind-specific). */
+  readonly token: string;
+  readonly kind: SecretKind;
+}
+
+/**
+ * Every secret a decorator has declared in this process, filled at decorator
+ * evaluation time. The module creates one accessor provider per entry.
  */
 class SecretRegistry {
   private readonly secrets = new Map<string, SecretRequirement>();
@@ -46,10 +49,10 @@ class SecretRegistry {
   register(
     name: string,
     options?: InjectSecretOptions,
-    kind: SecretInjectionKind = 'string',
+    kind: SecretKind = SecretKind.String,
   ): SecretRequirement {
     const token =
-      kind === 'bytes'
+      kind === SecretKind.Bytes
         ? getSecretBytesToken(name, options)
         : getSecretToken(name, options);
     const existing = this.secrets.get(token);
@@ -67,6 +70,13 @@ class SecretRegistry {
 
     this.secrets.set(token, requirement);
     return requirement;
+  }
+
+  /**
+   * The requirement registered under an injection token, if any.
+   */
+  get(token: string): SecretRequirement | undefined {
+    return this.secrets.get(token);
   }
 
   /**

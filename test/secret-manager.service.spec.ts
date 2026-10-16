@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import {
   InMemorySecretBackend,
+  SecretKind,
   SecretManagerService,
   SecretNotFoundError,
 } from '../src';
@@ -252,7 +253,7 @@ describe('SecretManagerService with validation', () => {
   });
 
   it('validates bytes-kind requirements via getBytes', async () => {
-    secretRegistry.register('binary-secret', undefined, 'bytes');
+    secretRegistry.register('binary-secret', undefined, SecretKind.Bytes);
 
     const service = new SecretManagerService({
       defaultBackend: 'memory',
@@ -268,7 +269,7 @@ describe('SecretManagerService with validation', () => {
   });
 
   it('fails startup when a bytes-kind requirement is missing', async () => {
-    secretRegistry.register('missing-bytes', undefined, 'bytes');
+    secretRegistry.register('missing-bytes', undefined, SecretKind.Bytes);
 
     const service = new SecretManagerService({
       defaultBackend: 'memory',

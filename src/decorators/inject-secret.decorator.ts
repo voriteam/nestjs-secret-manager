@@ -1,6 +1,6 @@
 import { Inject } from '@nestjs/common';
 
-import { secretRegistry } from '../constants';
+import { SecretKind, secretRegistry } from '../constants';
 import { InjectSecretOptions } from '../interfaces/secret-manager-options.interface';
 
 /**
@@ -45,7 +45,7 @@ export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, 'string');
+  const requirement = secretRegistry.register(name, options, SecretKind.String);
   return Inject(requirement.token);
 }
 
@@ -86,6 +86,6 @@ export function InjectSecretBytes(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, 'bytes');
+  const requirement = secretRegistry.register(name, options, SecretKind.Bytes);
   return Inject(requirement.token);
 }

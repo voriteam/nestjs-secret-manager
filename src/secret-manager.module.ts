@@ -1,7 +1,11 @@
 import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
-import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
+import {
+  SECRET_MANAGER_OPTIONS,
+  SecretKind,
+  secretRegistry,
+} from './constants';
 import {
   SecretAccessor,
   SecretBytesAccessor,
@@ -216,7 +220,7 @@ export class SecretManagerModule {
         backend: requirement.backend,
       };
 
-      if (requirement.kind === 'bytes') {
+      if (requirement.kind === SecretKind.Bytes) {
         return {
           provide: requirement.token,
           useFactory:

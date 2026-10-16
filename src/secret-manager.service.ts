@@ -2,7 +2,11 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import type { Tracer } from '@opentelemetry/api';
 
-import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
+import {
+  SECRET_MANAGER_OPTIONS,
+  SecretKind,
+  secretRegistry,
+} from './constants';
 import type { SecretBackend } from './interfaces/secret-backend.interface';
 import type { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
 import { SecretCache } from './secret-cache';
@@ -129,7 +133,7 @@ export class SecretManagerService implements OnModuleInit {
         // truly binary secrets, decoding to UTF-8 silently substitutes
         // replacement characters but doesn't throw, so probing via the
         // matching method gives the most accurate validation.
-        if (secret.kind === 'bytes') {
+        if (secret.kind === SecretKind.Bytes) {
           await this.getBytes({
             name: secret.name,
             version: secret.version,
