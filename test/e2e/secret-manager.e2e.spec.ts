@@ -29,7 +29,6 @@ describe('SecretManagerModule (e2e)', () => {
             backends: [
               new InMemorySecretBackend({ 'test-secret': 'test-value' }),
             ],
-            validateOnStartup: false,
           }),
         ],
       }).compile();
@@ -113,7 +112,6 @@ describe('SecretManagerModule (e2e)', () => {
               backends: [
                 new InMemorySecretBackend({ 'async-secret': 'async-value' }),
               ],
-              validateOnStartup: false,
             }),
           }),
         ],
@@ -153,7 +151,6 @@ describe('SecretManagerModule (e2e)', () => {
                   'project-secret': config.projectId,
                 }),
               ],
-              validateOnStartup: false,
             }),
             inject: [CONFIG_TOKEN],
           }),
@@ -213,7 +210,6 @@ describe('SecretManagerModule (e2e)', () => {
           SecretManagerModule.forRoot({
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
             cacheEnabled: false,
           }),
         ],
@@ -320,31 +316,6 @@ describe('SecretManagerModule (e2e)', () => {
 
       await module.close();
     });
-
-    it('startup validation fails when a secret is missing', async () => {
-      @Injectable()
-      class TestService {
-        constructor(
-          @InjectSecret('does-not-exist')
-          public readonly getMissing: SecretAccessor,
-        ) {}
-      }
-
-      await expect(
-        Test.createTestingModule({
-          imports: [
-            SecretManagerModule.forRoot({
-              defaultBackend: 'memory',
-              backends: [new InMemorySecretBackend()],
-              validateOnStartup: true,
-            }),
-          ],
-          providers: [TestService],
-        })
-          .compile()
-          .then((m) => m.init()),
-      ).rejects.toThrow(/Failed to validate.*does-not-exist/s);
-    });
   });
 
   describe('@InjectSecretBytes', () => {
@@ -366,7 +337,6 @@ describe('SecretManagerModule (e2e)', () => {
           SecretManagerModule.forRoot({
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
             cacheEnabled: false,
           }),
         ],
