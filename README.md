@@ -190,6 +190,11 @@ runtime (per tenant, per request, or selected from config), because those names 
 deliberately ships no side list of extra secrets to validate, because a list kept apart from the call sites drifts from
 them.
 
+Validation runs in `onModuleInit`, ahead of the `onModuleInit` of every module that is not global, on NestJS 10 and 11.
+So a consumer in such a module that reads its secret in its own `onModuleInit` cannot fail before the report. A read during construction, in a constructor
+or in the body of an async factory provider, happens before any hook. If that read fails, boot stops with the read's own
+error and no report.
+
 ### Modes
 
 `startupValidation` takes a `StartupValidation` value:
@@ -215,17 +220,16 @@ where `error` is the underlying `SecretNotFoundError` or `SecretAccessDeniedErro
 
 ### Listing a graph's secrets from a tool
 
-`collectInjectedSecrets(modules)` returns the same list the validator probes, without reading any secret. It reads
-metadata only, so it works on a graph built in preview mode, where Nest instantiates nothing:
+`collectInjectedSecrets(modules)` returns the list the validator probes, without reading any secret. It reads metadata
+only, so it works on a graph built in preview mode, where Nest instantiates nothing:
 
 ```typescript
 import { NestContainer, NestFactory } from '@nestjs/core';
 import { collectInjectedSecrets } from '@vori/nestjs-secret-manager';
 
-const app = await NestFactory.createApplicationContext(AppModule, {
-  preview: true,
-  logger: false,
-});
+const app = await NestFactory.create(AppModule, { preview: true, logger: false });
+// Registers middleware without constructing it.
+await app.init();
 // On NestJS 10, app.get(ModulesContainer) returns null in preview mode,
 // so read the container directly.
 const modules = (app as unknown as { container: NestContainer }).container.getModules();
@@ -234,6 +238,10 @@ for (const { requirement, consumers } of collectInjectedSecrets(modules)) {
   console.log(requirement.name, requirement.kind, consumers.join(', '));
 }
 ```
+
+Nest registers middleware only when an HTTP application initializes. A graph built with
+`NestFactory.createApplicationContext` therefore has no middleware, and the list omits secrets that only middleware
+injects. That is the right call for an application that has no HTTP server, such as a worker.
 
 Each entry is one `{ requirement, consumers }` pair per injection token, sorted by secret name, with `consumers` sorted.
 
@@ -503,6 +511,21 @@ Here is how Google Secret Manager gRPC statuses are mapped:
 |---------------------|------|---------------------------|
 | `NOT_FOUND`         | 5    | `SecretNotFoundError`     |
 | `PERMISSION_DENIED` | 7    | `SecretAccessDeniedError` |
+
+## Upgrading from 0.1
+
+- `validateOnStartup` is replaced by `startupValidation`. A `forRootAsync` factory that still returns
+  `validateOnStartup` compiles, and the key is ignored, so remove it. `validateOnStartup: false` becomes
+  `StartupValidation.Off`.
+- Validation probes only the secrets that classes in the application's graph inject, not every decorated class the
+  process imported.
+- `debug` is removed. Every backend fetch logs at debug level.
+- `getLatest` and `getLatestBytes` are removed from `SecretManagerService` and from `SecretBackend`. Call `get` or
+  `getBytes` without a version. A custom backend no longer implements them.
+- Under `forSkipLoading()`, reads return `{"_placeholder":true,"key":"<name>"}` instead of `SECRET_NOT_LOADED:<name>`.
+- The package no longer creates OpenTelemetry spans, and `@opentelemetry/api` is no longer a peer dependency.
+- `@google-cloud/secret-manager` is an optional peer dependency. Install it yourself to use `GcpSecretManagerBackend`.
+- `SecretCache` is no longer exported.
 
 ## Security considerations
 
