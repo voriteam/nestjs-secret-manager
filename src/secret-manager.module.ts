@@ -218,7 +218,7 @@ export class SecretManagerModule {
    *
    * `@InjectSecret` registrations get a `SecretAccessor` (`() => Promise<string>`),
    * `@InjectSecretBytes` registrations get a `SecretBytesAccessor`
-   * (`() => Promise<Uint8Array>`). The value is fetched on demand and not
+   * (`() => Promise<Uint8Array<ArrayBuffer>>`). The value is fetched on demand and not
    * held on the consumer's instance.
    */
   private static createSecretProviders(): Provider[] {

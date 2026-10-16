@@ -201,9 +201,9 @@ deliberately ships no side list of extra secrets to validate, because a list kep
 them.
 
 Validation runs in `onModuleInit`, ahead of the `onModuleInit` of every module that is not global, on NestJS 10 and 11.
-So a consumer in such a module that reads its secret in its own `onModuleInit` cannot fail before the report. A read during construction, in a constructor
-or in the body of an async factory provider, happens before any hook. If that read fails, boot stops with the read's own
-error and no report.
+So a consumer in such a module that reads its secret in its own `onModuleInit` cannot fail before the report. A read
+during construction, in a constructor or in the body of an async factory provider, happens before any hook. If that read
+fails, boot stops with the read's own error and no report.
 
 ### Modes
 
@@ -221,7 +221,7 @@ it:
 
 ```
 Failed to validate 2 injected secret(s):
-  - payments-api-key (backend: gcp, version: latest), needed by BillingService, PaymentsController: Access denied to secret 'payments-api-key' in backend 'gcp'
+  - payments-api-key (backend: gcp, version: latest), needed by BillingService, PaymentsController: Access denied to secret 'payments-api-key' in backend 'gcp': 7 PERMISSION_DENIED: Permission denied on resource project vori-dev.
   - signing-key (backend: gcp, version: 3, bytes), needed by TokenSigner: Secret 'signing-key' not found in backend 'gcp' (version: 3)
 ```
 
