@@ -20,11 +20,6 @@ only via `service.get(...)` (without a corresponding decorator) fall outside thi
 Some of our secrets are accessed frequently, especially at startup time. These repeated accesses are now cached in
 memory, reducing overall latency to retrieve secrets.
 
-**Usage tracking**
-
-"Is this secret actually used?" We can now more definitively answer this question via telemetry—spans for each secret
-access—and dependency injection (e.g., tracing the dependency map).
-
 ## Features
 
 - `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
@@ -32,8 +27,6 @@ access—and dependency injection (e.g., tracing the dependency map).
 - **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
 - **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
 - **Custom backends** — extend via the `SecretBackend` interface
-- **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend`
-  attributes
 - **Global module** — register once in `AppModule`, available everywhere without re-importing
 
 ## Requirements
@@ -138,9 +131,6 @@ SecretManagerModule.forRoot({
   // staleness and rotation lag. Set to `0` to cache for the lifetime of
   // the process (explicit escape hatch).
   cacheTTL: 60_000,
-
-  // Enable verbose debug logging for cache hits (default: false)
-  debug: false,
 });
 ```
 
@@ -206,7 +196,7 @@ export class TokenSigner {
 }
 ```
 
-The same secret name can be injected as both a string and bytes in different services — the registry tracks them as separate requirements. Programmatic access mirrors the pair: `service.getBytes({ name, version?, backend? })` and `service.getLatestBytes({ name, backend? })`.
+The same secret name can be injected as both a string and bytes in different services — the registry tracks them as separate requirements. Programmatic access mirrors the pair with `service.getBytes({ name, version?, backend? })`.
 
 ### Why `@InjectSecret` returns a function, not a string
 
@@ -274,9 +264,7 @@ export class MyService {
 | Method                                   | Description                                                                              |
 |------------------------------------------|------------------------------------------------------------------------------------------|
 | `get({ name, version?, backend? })`      | Fetch a secret as a UTF-8 string; defaults to `'latest'` and the configured default backend |
-| `getLatest({ name, backend? })`          | Alias for `get({ name, version: 'latest', backend })`                                    |
 | `getBytes({ name, version?, backend? })` | Fetch a secret as raw bytes (`Uint8Array`); use for binary payloads                      |
-| `getLatestBytes({ name, backend? })`     | Alias for `getBytes({ name, version: 'latest', backend })`                               |
 | `clearCache()`                           | Flush all cached entries (both string and bytes views)                                   |
 
 ### Startup validation scope
@@ -343,12 +331,18 @@ class VaultBackend implements SecretBackend {
   constructor(private readonly options: { url: string; token: string }) {
   }
 
-  async get(name: string, version?: string): Promise<string> {
-    // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
+  async get(name: string, version = 'latest'): Promise<string> {
+    const query = version === 'latest' ? '' : `?version=${version}`;
+    const response = await fetch(
+      `${this.options.url}/v1/secret/data/${name}${query}`,
+      { headers: { 'X-Vault-Token': this.options.token } },
+    );
+    const body = (await response.json()) as { data: { data: { value: string } } };
+    return body.data.data.value;
   }
 
-  async getLatest(name: string): Promise<string> {
-    return this.get(name);
+  async getBytes(name: string, version?: string): Promise<Uint8Array> {
+    return new TextEncoder().encode(await this.get(name, version));
   }
 }
 
@@ -446,15 +440,3 @@ authenticate with:
 ```bash
 gcloud auth application-default login
 ```
-
-## OpenTelemetry
-
-Every secret fetch creates a `secret.get` span with the following attributes:
-
-| Attribute        | Description                                  |
-|------------------|----------------------------------------------|
-| `secret.name`    | The name of the secret                       |
-| `secret.version` | The resolved version (e.g., `latest` or `3`) |
-| `secret.backend` | The backend used (e.g., `gcp`, `memory`)     |
-
-Errors are recorded on the span and the span status is set to `ERROR`.

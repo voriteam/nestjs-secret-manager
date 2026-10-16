@@ -1,6 +1,4 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { SpanStatusCode, trace } from '@opentelemetry/api';
-import type { Tracer } from '@opentelemetry/api';
 
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
 import type { SecretBackend } from './interfaces/secret-backend.interface';
@@ -18,7 +16,6 @@ const REDACTED = '[SecretManagerService redacted]';
  * Features:
  * - Cache-first lookup to minimize backend calls
  * - Startup validation of all registered secrets
- * - OpenTelemetry tracing
  * - Multiple backend support
  *
  * Internal state (backends map, cache, options) is held in JS `#private`
@@ -32,7 +29,6 @@ export class SecretManagerService implements OnModuleInit {
   readonly #backends = new Map<string, SecretBackend>();
   readonly #stringCache: SecretCache<string>;
   readonly #bytesCache: SecretCache<Uint8Array>;
-  readonly #tracer: Tracer = trace.getTracer('secret-manager');
   readonly #options: SecretManagerModuleOptions;
 
   constructor(
@@ -178,29 +174,11 @@ export class SecretManagerService implements OnModuleInit {
       return `SECRET_NOT_LOADED:${name}`;
     }
 
-    const backend = this.#getBackend(backendName);
-    const resolvedVersion = version ?? 'latest';
-
-    return this.#tracer.startActiveSpan('secret.get', async (span) => {
-      span.setAttribute('secret.name', name);
-      span.setAttribute('secret.version', resolvedVersion);
-      span.setAttribute('secret.backend', backend.name);
-
-      try {
-        const value = await this.#getInternal(name, resolvedVersion, backend);
-        span.setStatus({ code: SpanStatusCode.OK });
-        return value;
-      } catch (error) {
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: (error as Error).message,
-        });
-        span.recordException(error as Error);
-        throw error;
-      } finally {
-        span.end();
-      }
-    });
+    return this.#getInternal(
+      name,
+      version ?? 'latest',
+      this.#getBackend(backendName),
+    );
   }
 
   async #getInternal(
@@ -211,14 +189,11 @@ export class SecretManagerService implements OnModuleInit {
     if (this.#options.cacheEnabled !== false) {
       const cached = this.#stringCache.get(backend.name, name, version);
       if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret: ${name}`);
-        }
         return cached;
       }
     }
 
-    this.#logger.log({
+    this.#logger.debug({
       msg: 'Fetching secret',
       backend: backend.name,
       name,
@@ -232,20 +207,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret.
-   */
-  public async getLatest(options: {
-    name: string;
-    backend?: string;
-  }): Promise<string> {
-    return this.get({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**
@@ -268,33 +229,11 @@ export class SecretManagerService implements OnModuleInit {
       return new TextEncoder().encode(`SECRET_NOT_LOADED:${name}`);
     }
 
-    const backend = this.#getBackend(backendName);
-    const resolvedVersion = version ?? 'latest';
-
-    return this.#tracer.startActiveSpan('secret.getBytes', async (span) => {
-      span.setAttribute('secret.name', name);
-      span.setAttribute('secret.version', resolvedVersion);
-      span.setAttribute('secret.backend', backend.name);
-
-      try {
-        const value = await this.#getBytesInternal(
-          name,
-          resolvedVersion,
-          backend,
-        );
-        span.setStatus({ code: SpanStatusCode.OK });
-        return value;
-      } catch (error) {
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: (error as Error).message,
-        });
-        span.recordException(error as Error);
-        throw error;
-      } finally {
-        span.end();
-      }
-    });
+    return this.#getBytesInternal(
+      name,
+      version ?? 'latest',
+      this.#getBackend(backendName),
+    );
   }
 
   async #getBytesInternal(
@@ -305,15 +244,12 @@ export class SecretManagerService implements OnModuleInit {
     if (this.#options.cacheEnabled !== false) {
       const cached = this.#bytesCache.get(backend.name, name, version);
       if (cached !== undefined) {
-        if (this.#options.debug) {
-          this.#logger.debug(`Cache hit for secret bytes: ${name}`);
-        }
         // Defensive copy — caller mutations must not corrupt the cache.
         return new Uint8Array(cached);
       }
     }
 
-    this.#logger.log({
+    this.#logger.debug({
       msg: 'Fetching secret bytes',
       backend: backend.name,
       name,
@@ -329,20 +265,6 @@ export class SecretManagerService implements OnModuleInit {
     }
 
     return value;
-  }
-
-  /**
-   * Get the latest version of a secret as raw bytes.
-   */
-  public async getLatestBytes(options: {
-    name: string;
-    backend?: string;
-  }): Promise<Uint8Array> {
-    return this.getBytes({
-      name: options.name,
-      version: 'latest',
-      backend: options.backend,
-    });
   }
 
   /**

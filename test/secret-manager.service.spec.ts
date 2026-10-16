@@ -120,25 +120,11 @@ describe('SecretManagerService', () => {
       );
     });
 
-    it('getLatestBytes resolves the latest version', async () => {
-      memoryBackend.set('api-key', 'v1', '1');
-      memoryBackend.set('api-key', 'v2');
-      const bytes = await service.getLatestBytes({ name: 'api-key' });
-      expect(new TextDecoder().decode(bytes)).toBe('v2');
-    });
-
     it('mutating returned bytes does not corrupt the cache', async () => {
       const first = await service.getBytes({ name: 'api-key' });
       first.fill(0); // attempt to corrupt
       const second = await service.getBytes({ name: 'api-key' });
       expect(new TextDecoder().decode(second)).toBe('test-api-key-value');
-    });
-  });
-
-  describe('getLatest', () => {
-    it('should retrieve the latest version of a secret', async () => {
-      const value = await service.getLatest({ name: 'api-key' });
-      expect(value).toBe('test-api-key-value');
     });
   });
 
