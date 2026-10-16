@@ -1,6 +1,6 @@
 {
   "name": "@vori/nestjs-secret-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS module for secret management with dependency injection, startup validation, and caching",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
