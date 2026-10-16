@@ -52,27 +52,23 @@ export class SecretStartupValidator implements OnModuleInit {
     const settled = await Promise.allSettled(
       injected.map(({ requirement }) => this.#probe(requirement)),
     );
-    const failed = injected.flatMap((secret, i) => {
+    const failures = injected.flatMap((secret, i) => {
       const outcome = settled[i];
       return outcome?.status === 'rejected'
-        ? [
-            {
-              failure: this.#failureOf(secret, outcome.reason),
-              kind: secret.requirement.kind,
-            },
-          ]
+        ? [this.#failureOf(secret, outcome.reason)]
         : [];
     });
     const durationMs = Math.round(performance.now() - startedAt);
 
-    const failedSuffix = failed.length > 0 ? `, ${failed.length} failed` : '';
+    const failedSuffix =
+      failures.length > 0 ? `, ${failures.length} failed` : '';
     this.#logger.log(
       `Validated ${injected.length} injected secret(s) in ${durationMs}ms${failedSuffix}`,
     );
-    if (failed.length === 0) {
+    if (failures.length === 0) {
       return;
     }
-    const error = new SecretValidationError(failed);
+    const error = new SecretValidationError(failures);
     if (this.#mode === StartupValidation.Enforce) {
       throw error;
     }
@@ -101,6 +97,7 @@ export class SecretStartupValidator implements OnModuleInit {
       name: requirement.name,
       version: requirement.version ?? 'latest',
       backend: requirement.backend ?? this.#defaultBackend ?? 'default',
+      kind: requirement.kind,
       consumers,
       error: reason instanceof Error ? reason : new Error(String(reason)),
     };

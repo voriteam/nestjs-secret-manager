@@ -7,6 +7,8 @@ export interface SecretValidationFailure {
   readonly version: string;
   /** The configured `defaultBackend` when the consumer named none. */
   readonly backend: string;
+  /** Whether the failed probe read the secret as a string or as bytes. */
+  readonly kind: SecretKind;
   /** Sorted and unique, the same strings as `InjectedSecret.consumers`. */
   readonly consumers: readonly string[];
   /** Why the read failed, usually SecretNotFoundError or SecretAccessDeniedError. */
@@ -26,23 +28,16 @@ export interface SecretValidationFailure {
  */
 export class SecretValidationError extends Error {
   public readonly name = 'SecretValidationError';
-  public readonly failures: readonly SecretValidationFailure[];
 
-  constructor(
-    failed: readonly {
-      readonly failure: SecretValidationFailure;
-      readonly kind: SecretKind;
-    }[],
-  ) {
+  constructor(public readonly failures: readonly SecretValidationFailure[]) {
     super(
       [
-        `Failed to validate ${failed.length} injected secret(s):`,
-        ...failed.map(
-          ({ failure: { name, backend, version, consumers, error }, kind }) =>
+        `Failed to validate ${failures.length} injected secret(s):`,
+        ...failures.map(
+          ({ name, backend, version, kind, consumers, error }) =>
             `  - ${name} (backend: ${backend}, version: ${version}${kind === SecretKind.Bytes ? ', bytes' : ''}), needed by ${consumers.join(', ')}: ${error.message}`,
         ),
       ].join('\n'),
     );
-    this.failures = failed.map(({ failure }) => failure);
   }
 }

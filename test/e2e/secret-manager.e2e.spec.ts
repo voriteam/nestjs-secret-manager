@@ -16,6 +16,7 @@ import {
   InMemorySecretBackend,
   InjectSecret,
   InjectSecretBytes,
+  SecretKind,
   SecretManagerModule,
   SecretManagerService,
   SecretNotFoundError,
@@ -444,6 +445,7 @@ describe('SecretManagerModule (e2e)', () => {
           name: 'payments-api-key',
           version: 'latest',
           backend: 'memory',
+          kind: SecretKind.String,
           consumers: ['ConsumerService'],
           error: new SecretNotFoundError(
             'payments-api-key',
@@ -488,6 +490,7 @@ describe('SecretManagerModule (e2e)', () => {
           name: 'vault-token',
           version: '3',
           backend: 'vault',
+          kind: SecretKind.String,
           consumers: ['VaultClient'],
           error: new SecretNotFoundError('vault-token', 'vault', '3'),
         },
