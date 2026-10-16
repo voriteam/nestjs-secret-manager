@@ -4,6 +4,14 @@ import { SecretBackend } from '../interfaces/secret-backend.interface';
 const utf8Decoder = new TextDecoder('utf-8', { fatal: false });
 const utf8Encoder = new TextEncoder();
 
+export interface InMemorySecretBackendOptions {
+  /**
+   * Value for any name or version that was not seeded, UTF-8 encoded for
+   * bytes reads. Without it, such a read throws SecretNotFoundError.
+   */
+  fallback?: (name: string) => string;
+}
+
 /**
  * In-memory backend for testing and local development.
  *
@@ -16,6 +24,7 @@ export class InMemorySecretBackend implements SecretBackend {
 
   // Map of secret name -> Map of version -> bytes
   private readonly secrets = new Map<string, Map<string, Uint8Array>>();
+  private readonly fallback?: (name: string) => string;
 
   /**
    * Create an in-memory backend with optional initial secrets.
@@ -23,7 +32,11 @@ export class InMemorySecretBackend implements SecretBackend {
    * @param initialSecrets - Map of secret names to values (string or bytes;
    *   stored as the 'latest' version).
    */
-  constructor(initialSecrets?: Record<string, string | Uint8Array>) {
+  constructor(
+    initialSecrets?: Record<string, string | Uint8Array>,
+    { fallback }: InMemorySecretBackendOptions = {},
+  ) {
+    this.fallback = fallback;
     if (initialSecrets) {
       for (const [name, value] of Object.entries(initialSecrets)) {
         this.set(name, value);
@@ -47,17 +60,14 @@ export class InMemorySecretBackend implements SecretBackend {
   }
 
   private getRaw(name: string, version?: string): Uint8Array {
-    const versions = this.secrets.get(name);
-    if (!versions) {
-      throw new SecretNotFoundError(name, this.name, version);
+    const value = this.secrets.get(name)?.get(version ?? 'latest');
+    if (value !== undefined) {
+      return new Uint8Array(value);
     }
-    const versionId = version ?? 'latest';
-    const value = versions.get(versionId);
-    if (value === undefined) {
-      throw new SecretNotFoundError(name, this.name, version);
+    if (this.fallback) {
+      return utf8Encoder.encode(this.fallback(name));
     }
-    // Defensive copy — callers must not be able to mutate stored values.
-    return new Uint8Array(value);
+    throw new SecretNotFoundError(name, this.name, version);
   }
 
   async get(name: string, version?: string): Promise<string> {
@@ -69,7 +79,7 @@ export class InMemorySecretBackend implements SecretBackend {
   }
 
   /**
-   * Check if a secret exists.
+   * Check if a secret was seeded. The fallback does not count.
    */
   has(name: string, version = 'latest'): boolean {
     return this.secrets.get(name)?.has(version) ?? false;

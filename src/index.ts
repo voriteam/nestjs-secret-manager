@@ -38,6 +38,7 @@ export type { InjectedSecret } from './secret-startup-validator';
 // Backends
 export { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';
 export { InMemorySecretBackend } from './backends/in-memory.backend';
+export type { InMemorySecretBackendOptions } from './backends/in-memory.backend';
 
 // Cache (for advanced use cases)
 export { SecretCache } from './secret-cache';
