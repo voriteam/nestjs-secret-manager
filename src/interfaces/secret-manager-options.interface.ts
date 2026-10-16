@@ -21,9 +21,9 @@ export enum StartupValidation {
  */
 export interface SecretManagerModuleOptions {
   /**
-   * Default backend to use when @InjectSecret does not specify one.
-   * Must match the `name` of one of the configured backends.
-   * Required unless `skipLoading` is true.
+   * The backend for an injection or read that names none. Must match the
+   * `name` of a configured backend. When it is unset, every injection and read
+   * must name its backend, or the read fails.
    */
   defaultBackend?: string;
 

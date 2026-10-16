@@ -26,7 +26,7 @@ application's classes inject, and which classes inject it.
 
 ## Features
 
-- `@InjectSecret` and `@InjectSecretBytes` inject secret accessors into constructor parameters, and
+- `@InjectSecret` and `@InjectSecretBytes` inject secret accessors into constructor parameters and properties, and
   `secretAccessorToken` and `secretBytesAccessorToken` name the same accessors in a factory provider's `inject`.
 - Startup validation probes the secrets the application's classes inject, and can enforce, warn or be switched off.
 - An in-memory cache with a TTL serves repeat reads, and concurrent reads of one secret share one backend fetch.
@@ -39,6 +39,7 @@ application's classes inject, and which classes inject it.
 - Node.js &gt;= 24
 - NestJS 10 or 11 (`@nestjs/common` and `@nestjs/core`)
 - `@google-cloud/secret-manager` 5, 6 or 7, only when you use `GcpSecretManagerBackend`
+- TypeScript 5.7 or later, for the typings
 
 ## Installation
 
@@ -75,8 +76,8 @@ export class AppModule {
 }
 ```
 
-Each backend is responsible for its own configuration — the module itself is agnostic to which backends exist. Add as
-many as you need; `defaultBackend` selects the one used when `@InjectSecret` doesn't specify a backend.
+Each backend takes its own configuration, and the module works with any set of them. Add as many as you need.
+`defaultBackend` names the one that an injection or a read uses when it names none.
 
 ### 2. Inject secrets into services
 
@@ -122,8 +123,8 @@ import {
 } from '@vori/nestjs-secret-manager';
 
 SecretManagerModule.forRoot({
-  // Required (unless skipLoading): name of the backend used when @InjectSecret
-  // does not specify one. Must match a backend's `name`.
+  // Optional: the backend for an injection or read that names none. Must match
+  // a backend's `name`. Without it, every injection and read names its backend.
   defaultBackend: 'gcp',
 
   // Required (unless skipLoading): backends available for resolution.
@@ -151,11 +152,18 @@ SecretManagerModule.forRoot({
 Use this when options depend on other providers, such as `ConfigService`:
 
 ```typescript
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import {
+  GcpSecretManagerBackend,
+  SecretManagerModule,
+  StartupValidation,
+} from '@vori/nestjs-secret-manager';
+
 SecretManagerModule.forRootAsync({
   imports: [ConfigModule],
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'gcp',
-    backends: [new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID'))],
+    backends: [new GcpSecretManagerBackend(config.getOrThrow('GCP_PROJECT_ID'))],
     startupValidation:
       config.get('NODE_ENV') === 'production'
         ? StartupValidation.Enforce
@@ -178,12 +186,12 @@ Validated 24 injected secret(s) in 312ms
 
 ### What is probed
 
-A secret is probed when `@InjectSecret` or `@InjectSecretBytes` sits on a constructor parameter of a class that Nest
-instantiates in this application: a provider, a controller, a guard, interceptor, pipe or filter, or a middleware. A
-factory provider counts too when its `inject` list names a secret's token, as described in
-[Factory providers](#factory-providers). Importing a decorated class is not enough. A class that is imported but never
-provided by any module is not probed, so a worker that shares code with an API does not fail on secrets only the API
-uses.
+A secret is probed when `@InjectSecret` or `@InjectSecretBytes` sits on a constructor parameter or a property of a class
+that Nest instantiates in this application: a provider, a controller, a guard, interceptor, pipe or filter, or a
+middleware. A secret's token counts the same way, in `@Inject(...)` on a parameter or property and in a factory
+provider's `inject` list, as described in [Factory providers](#factory-providers). Importing a decorated class is not
+enough. A class that is imported but never provided by any module is not probed, so a worker that shares code with an
+API does not fail on secrets only the API uses.
 
 Secrets read only through `service.get(...)` are not probed. Their names are invisible to the graph, so a typo, a
 missing IAM grant or a deleted secret surfaces at the first runtime call instead. If the name is known at compile time,
@@ -217,8 +225,14 @@ Failed to validate 2 injected secret(s):
   - signing-key (backend: gcp, version: 3, bytes), needed by TokenSigner: Secret 'signing-key' not found in backend 'gcp' (version: 3)
 ```
 
-`SecretValidationError.failures` carries the same data as `{ name, version, backend, kind, consumers, error }` objects,
-where `error` is the underlying `SecretNotFoundError` or `SecretAccessDeniedError`.
+The list after `needed by` names each class that Nest builds with the secret. When different classes share a name, each
+one is qualified with its module, as in `BillingModule.ConsumerService`.
+
+`SecretValidationError.failures` carries the same data as `{ name, version, backend, kind, consumers, error }` objects.
+`error` is what the read threw. The bundled backends throw `SecretNotFoundError` and `SecretAccessDeniedError`. A secret
+whose backend is not configured fails with a plain `Error`, and so does one that names no backend when `defaultBackend`
+is unset. Any other failure carries the backend's own error, such as the Google Cloud client's error for a network
+failure.
 
 ### Listing a graph's secrets from a tool
 
@@ -226,20 +240,34 @@ where `error` is the underlying `SecretNotFoundError` or `SecretAccessDeniedErro
 only, so it works on a graph built in preview mode, where Nest instantiates nothing:
 
 ```typescript
+// list-secrets.ts
 import { NestContainer, NestFactory } from '@nestjs/core';
 import { collectInjectedSecrets } from '@vori/nestjs-secret-manager';
 
-const app = await NestFactory.create(AppModule, { preview: true, logger: false });
-// Registers middleware without constructing it.
-await app.init();
-// On NestJS 10, app.get(ModulesContainer) returns null in preview mode,
-// so read the container directly.
-const modules = (app as unknown as { container: NestContainer }).container.getModules();
+import { AppModule } from './app.module';
 
-for (const { requirement, consumers } of collectInjectedSecrets(modules)) {
-  console.log(requirement.name, requirement.kind, consumers.join(', '));
+async function listSecrets(): Promise<void> {
+  const app = await NestFactory.create(AppModule, {
+    preview: true,
+    logger: false,
+  });
+  // Registers middleware without constructing it.
+  await app.init();
+  const { container } = app as unknown as { container: NestContainer };
+
+  for (const { requirement, consumers } of collectInjectedSecrets(
+    container.getModules(),
+  )) {
+    console.log(requirement.name, requirement.kind, consumers.join(', '));
+  }
+  await app.close();
 }
+
+void listSecrets();
 ```
+
+The sample reads the container directly because `app.get(ModulesContainer)` returns `null` in preview mode on NestJS
+10.3.0, while 10.0.0 and 10.4.19 return the container. `container.getModules()` works on every version.
 
 Nest registers middleware only when an HTTP application initializes. A graph built with
 `NestFactory.createApplicationContext` therefore has no middleware, and the list omits secrets that only middleware
@@ -249,6 +277,7 @@ Each entry is one `{ requirement, consumers }` pair per injection token, sorted 
 
 ## Decorator options
 
+<!-- fragment -->
 ```typescript
 // Fetch the latest version from the default backend
 @InjectSecret('secret-name')
@@ -260,11 +289,15 @@ Each entry is one `{ requirement, consumers }` pair per injection token, sorted 
 @InjectSecret('secret-name', { backend: 'memory' })
 ```
 
+Both decorators also work on a property. Nest sets the property after the constructor runs, so the constructor cannot
+call that accessor.
+
 ### Binary secrets — `@InjectSecretBytes`
 
-For payloads where UTF-8 decoding would be lossy (PEM/DER private keys, AEAD keys, packed credential blobs), use `@InjectSecretBytes`. It mirrors `@InjectSecret` but resolves to a `SecretBytesAccessor` (`() => Promise<Uint8Array>`):
+For payloads where UTF-8 decoding would be lossy (PEM/DER private keys, AEAD keys, packed credential blobs), use `@InjectSecretBytes`. It mirrors `@InjectSecret` but resolves to a `SecretBytesAccessor` (`() => Promise<Uint8Array<ArrayBuffer>>`):
 
 ```typescript
+import { Injectable } from '@nestjs/common';
 import {
   InjectSecretBytes,
   type SecretBytesAccessor,
@@ -277,7 +310,7 @@ export class TokenSigner {
     private readonly getSigningKey: SecretBytesAccessor,
   ) {}
 
-  async sign(payload: Uint8Array) {
+  async sign(message: string): Promise<ArrayBuffer> {
     const keyBytes = await this.getSigningKey();
     const key = await crypto.subtle.importKey(
       'raw',
@@ -286,10 +319,13 @@ export class TokenSigner {
       false,
       ['sign'],
     );
-    return crypto.subtle.sign('HMAC', key, payload);
+    return crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
   }
 }
 ```
+
+Each call returns a fresh copy that the caller owns. Its type, `Uint8Array<ArrayBuffer>`, is what WebCrypto accepts, and
+zeroing it with `fill(0)` leaves the cached copy intact.
 
 The same secret name can be injected as both a string and bytes in different services. The registry tracks them as separate requirements, and startup validation probes each one. Programmatic access mirrors the pair with `service.getBytes({ name, version?, backend? })`.
 
@@ -301,11 +337,16 @@ A factory provider has no constructor parameters to decorate. List the secret's 
 decorator's options.
 
 ```typescript
-import {Module} from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import {
   secretAccessorToken,
   type SecretAccessor,
 } from '@vori/nestjs-secret-manager';
+
+// A class with no Nest decorators, such as one from a vendor SDK.
+class PartnerClient {
+  constructor(private readonly getToken: SecretAccessor) {}
+}
 
 @Module({
   providers: [
@@ -328,6 +369,7 @@ one requirement, so validation probes the secret once and names both consumers.
 
 A common pattern in DI containers is to inject the resolved secret directly:
 
+<!-- fragment -->
 ```typescript
 // NOT how this library works
 constructor(@InjectSecret('api-key') private readonly apiKey: string) {}
@@ -338,6 +380,12 @@ That stores the secret as an instance field for the lifetime of the service. Nes
 This library deliberately offers no `string`-typed mode. `@InjectSecret` always resolves to a `SecretAccessor`:
 
 ```typescript
+import { Injectable } from '@nestjs/common';
+import {
+  InjectSecret,
+  type SecretAccessor,
+} from '@vori/nestjs-secret-manager';
+
 @Injectable()
 export class PartnerClient {
   constructor(
@@ -402,10 +450,36 @@ When a vendor rejects a credential that may have been rotated, call `invalidate`
 again. The other secrets stay cached:
 
 ```typescript
-const response = await this.callPartner(await this.getPartnerToken());
-if (response.status === 401) {
-  this.secrets.invalidate({name: 'partner-api-token'});
-  return this.callPartner(await this.getPartnerToken());
+import { Injectable } from '@nestjs/common';
+import {
+  InjectSecret,
+  SecretManagerService,
+  type SecretAccessor,
+} from '@vori/nestjs-secret-manager';
+
+@Injectable()
+export class PartnerInvoices {
+  constructor(
+    private readonly secrets: SecretManagerService,
+    @InjectSecret('partner-api-token')
+    private readonly getPartnerToken: SecretAccessor,
+  ) {}
+
+  async fetchInvoice(invoiceId: string): Promise<Response> {
+    const response = await this.request(invoiceId);
+    if (response.status !== 401) {
+      return response;
+    }
+    this.secrets.invalidate({ name: 'partner-api-token' });
+    return this.request(invoiceId);
+  }
+
+  private async request(invoiceId: string): Promise<Response> {
+    const token = await this.getPartnerToken();
+    return fetch(`https://api.partner.example.com/invoices/${invoiceId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }
 }
 ```
 
@@ -417,8 +491,10 @@ Under `forSkipLoading()`, `invalidate` does nothing.
 secrets a test needs:
 
 ```typescript
-import {Test} from '@nestjs/testing';
-import {SecretManagerModule} from '@vori/nestjs-secret-manager';
+import { Test } from '@nestjs/testing';
+import { SecretManagerModule } from '@vori/nestjs-secret-manager';
+
+import { MyService } from './my.service';
 
 describe('MyService', () => {
   let service: MyService;
@@ -447,6 +523,8 @@ A test that builds a large graph rarely wants to seed every secret it injects. P
 test did not seed:
 
 ```typescript
+import { SecretManagerModule } from '@vori/nestjs-secret-manager';
+
 SecretManagerModule.forTesting(
   { 'api-key': 'test-api-key' },
   { fallback: (name) => `fake-secret::${name}` },
@@ -456,11 +534,16 @@ SecretManagerModule.forTesting(
 Without `fallback`, reading an unseeded secret throws `SecretNotFoundError`. The same option exists on
 `new InMemorySecretBackend(secrets, { fallback })`.
 
+`@vori/nestjs-secret-manager/testing` exports `secretRegistry`, the process-wide list of declared secrets, for a test that
+inspects or clears it. TypeScript resolves this subpath through the package's `exports` map, so it finds the subpath's
+types only when `moduleResolution` is `node16`, `nodenext` or `bundler`.
+
 ## Running without secret access
 
 CLI tools, code generators and builds often construct the application without any access to a secret backend.
 `forSkipLoading()` configures no backends and probes nothing, and every read returns a JSON placeholder:
 
+<!-- fragment -->
 ```typescript
 SecretManagerModule.forSkipLoading();
 
@@ -473,59 +556,75 @@ The placeholder parses as JSON, so a provider that runs `JSON.parse` on its secr
 
 ## Custom backends
 
-Implement `SecretBackend` to integrate any secret provider, then pass an instance via `backends`:
+Implement `SecretBackend` to read from any secret store. Throw `SecretNotFoundError` and `SecretAccessDeniedError` so
+startup validation and callers can tell a missing secret from a denied one. This backend reads HashiCorp Vault's
+key-value store:
 
 ```typescript
+// vault.backend.ts
 import {
-  SecretBackend,
-  SecretManagerModule,
+  SecretAccessDeniedError,
+  type SecretBackend,
+  SecretNotFoundError,
 } from '@vori/nestjs-secret-manager';
 
-class VaultBackend implements SecretBackend {
+export class VaultBackend implements SecretBackend {
   readonly name = 'vault';
 
-  constructor(private readonly options: { url: string; token: string }) {
-  }
+  constructor(private readonly options: { url: string; token: string }) {}
 
   // `version` is 'latest' when the caller pinned none.
   async get(name: string, version?: string): Promise<string> {
-    // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
+    const query =
+      version && version !== 'latest' ? `?version=${version}` : '';
+    const response = await fetch(
+      `${this.options.url}/v1/secret/data/${name}${query}`,
+      { headers: { 'X-Vault-Token': this.options.token } },
+    );
+    if (response.status === 404) {
+      throw new SecretNotFoundError(name, this.name, version);
+    }
+    if (response.status === 403) {
+      throw new SecretAccessDeniedError(name, this.name);
+    }
+    const body = (await response.json()) as {
+      data: { data: { value: string } };
+    };
+    return body.data.data.value;
   }
 
   async getBytes(name: string, version?: string): Promise<Uint8Array> {
     return new TextEncoder().encode(await this.get(name, version));
   }
 }
-
-SecretManagerModule.forRoot({
-  defaultBackend: 'vault',
-  backends: [
-    new VaultBackend({url: 'https://vault.example.com', token: '...'}),
-  ],
-});
-
-// Then use via decorator or service
-@InjectSecret('my-secret', {backend: 'vault'})
 ```
 
-If your backend needs DI-resolved configuration (e.g., from `ConfigService`), use `forRootAsync` and construct the
-backend inside the factory:
+Pass an instance in `backends`. When its configuration comes from `ConfigService`, construct it inside a `forRootAsync`
+factory:
 
 ```typescript
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SecretManagerModule } from '@vori/nestjs-secret-manager';
+
+import { VaultBackend } from './vault.backend';
+
 SecretManagerModule.forRootAsync({
   imports: [ConfigModule],
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'vault',
     backends: [
       new VaultBackend({
-        url: config.get('VAULT_URL'),
-        token: config.get('VAULT_TOKEN'),
+        url: config.getOrThrow('VAULT_URL'),
+        token: config.getOrThrow('VAULT_TOKEN'),
       }),
     ],
   }),
   inject: [ConfigService],
 });
 ```
+
+A consumer reads it with `@InjectSecret('my-secret', { backend: 'vault' })`, or with no option when it is the
+`defaultBackend`.
 
 ## Error handling
 
@@ -534,18 +633,27 @@ The module throws typed errors you can catch and handle specifically:
 ```typescript
 import {
   SecretAccessDeniedError,
+  SecretManagerService,
   SecretNotFoundError,
 } from '@vori/nestjs-secret-manager';
 
-try {
-  await secrets.get({name: 'my-secret'});
-} catch (error) {
-  if (error instanceof SecretNotFoundError) {
-    // error.secretName, error.backend, error.version
-    console.error('Secret does not exist:', error.secretName);
-  } else if (error instanceof SecretAccessDeniedError) {
-    // error.secretName, error.backend, error.reason
-    console.error('Permission denied:', error.reason);
+export async function readOptionalSecret(
+  secrets: SecretManagerService,
+): Promise<string | undefined> {
+  try {
+    return await secrets.get({ name: 'my-secret' });
+  } catch (error) {
+    if (error instanceof SecretNotFoundError) {
+      // error.secretName, error.backend, error.version
+      console.error('Secret does not exist:', error.secretName);
+      return undefined;
+    }
+    if (error instanceof SecretAccessDeniedError) {
+      // error.secretName, error.backend, error.reason
+      console.error('Permission denied:', error.reason);
+      return undefined;
+    }
+    throw error;
   }
 }
 ```
@@ -561,9 +669,11 @@ Here is how Google Secret Manager gRPC statuses are mapped:
 
 ## Upgrading from 0.1
 
-- `validateOnStartup` is replaced by `startupValidation`. A `forRootAsync` factory that still returns
-  `validateOnStartup` compiles, and the key is ignored, so remove it. `validateOnStartup: false` becomes
-  `StartupValidation.Off`.
+- `validateOnStartup` is replaced by `startupValidation`. `forRoot` rejects the old key at compile time. A
+  `forRootAsync` factory that still returns `validateOnStartup` compiles, and the key is ignored, so remove it.
+  `validateOnStartup: false` becomes `StartupValidation.Off`.
+- `SecretManagerService` no longer has an `onModuleInit` method. Validation runs when Nest initializes the module, and a
+  service constructed with `new` validates nothing.
 - Validation probes only the secrets that classes in the application's graph inject, not every decorated class the
   process imported.
 - `debug` is removed. Every backend fetch logs at debug level.
@@ -573,6 +683,11 @@ Here is how Google Secret Manager gRPC statuses are mapped:
 - The package no longer creates OpenTelemetry spans, and `@opentelemetry/api` is no longer a peer dependency.
 - `@google-cloud/secret-manager` is an optional peer dependency. Install it yourself to use `GcpSecretManagerBackend`.
 - `SecretCache` is no longer exported.
+- `secretRegistry.register(name, options, kind)` from `@vori/nestjs-secret-manager/testing` takes a `SecretKind`, such
+  as `SecretKind.Bytes`, instead of the string `'bytes'`. The fields of the `SecretRequirement` it returns are
+  `readonly`.
+- `SecretBytesAccessor` and `getBytes` return `Uint8Array<ArrayBuffer>`, which WebCrypto accepts. These typings need
+  TypeScript 5.7 or later.
 
 ## Security considerations
 

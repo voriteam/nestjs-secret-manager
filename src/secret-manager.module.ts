@@ -32,7 +32,7 @@ import { SecretStartupValidator } from './secret-startup-validator';
  *
  * Provides:
  * - SecretManagerService for programmatic access to secrets
- * - @InjectSecret decorator for dependency injection of secret values
+ * - @InjectSecret decorator for dependency injection of secret accessors
  * - Startup validation of the secrets the application's graph injects
  * - In-memory caching to reduce backend calls
  *
@@ -60,7 +60,7 @@ import { SecretStartupValidator } from './secret-startup-validator';
  *       useFactory: (config: ConfigService) => ({
  *         defaultBackend: 'gcp',
  *         backends: [
- *           new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID')),
+ *           new GcpSecretManagerBackend(config.getOrThrow('GCP_PROJECT_ID')),
  *         ],
  *         startupValidation: StartupValidation.Warn,
  *       }),
