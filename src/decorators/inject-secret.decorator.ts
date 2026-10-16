@@ -27,14 +27,14 @@ export function secretAccessorToken(
 }
 
 /**
- * Parameter decorator to inject a lazy accessor for a secret.
+ * Injects a lazy accessor for a secret into a constructor parameter or a
+ * property.
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
  * (cache-first). When Nest builds the decorated class, startup validation
- * probes the secret at boot unless `startupValidation` is `Off` or loading
- * is skipped, so
- * misconfigured access fails fast even though no value is stored on the
- * consumer.
+ * probes the secret at boot unless `startupValidation` is `Off` or loading is
+ * skipped, so misconfigured access fails fast even though no value is stored
+ * on the consumer.
  *
  * @example
  * ```typescript
@@ -58,7 +58,7 @@ export function secretAccessorToken(
 export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
-): ParameterDecorator {
+): PropertyDecorator & ParameterDecorator {
   return Inject(secretAccessorToken(name, options));
 }
 
@@ -79,8 +79,8 @@ export function secretBytesAccessorToken(
 }
 
 /**
- * Parameter decorator to inject a lazy accessor that returns a secret as
- * raw bytes (`Uint8Array`).
+ * Injects a lazy accessor that returns a secret as raw bytes (`Uint8Array`)
+ * into a constructor parameter or a property.
  *
  * Mirrors `@InjectSecret` in every other respect — the value is fetched
  * cache-first on each call and never lives as an instance field on the
@@ -106,6 +106,6 @@ export function secretBytesAccessorToken(
 export function InjectSecretBytes(
   name: string,
   options?: InjectSecretOptions,
-): ParameterDecorator {
+): PropertyDecorator & ParameterDecorator {
   return Inject(secretBytesAccessorToken(name, options));
 }

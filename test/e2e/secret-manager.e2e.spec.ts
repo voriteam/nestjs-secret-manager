@@ -354,6 +354,45 @@ describe('SecretManagerModule (e2e)', () => {
       await module.close();
     });
 
+    it('injects accessors into properties, and validation probes them', async () => {
+      @Injectable()
+      class PropertyConsumer {
+        @InjectSecret('property-key')
+        readonly getKey!: SecretAccessor;
+
+        @InjectSecretBytes('property-bytes')
+        readonly getBytes!: SecretBytesAccessor;
+      }
+
+      const backend = new CountingBackend({
+        'property-key': 'value',
+        'property-bytes': new Uint8Array([0x01, 0x02]),
+      });
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [backend],
+          }),
+        ],
+        providers: [PropertyConsumer],
+      }).compile();
+
+      await moduleRef.init();
+
+      expect(backend.calls).toEqual([
+        ['getBytes', 'property-bytes', 'latest'],
+        ['get', 'property-key', 'latest'],
+      ]);
+      const consumer = moduleRef.get(PropertyConsumer);
+      await expect(consumer.getKey()).resolves.toBe('value');
+      await expect(consumer.getBytes()).resolves.toEqual(
+        new Uint8Array([0x01, 0x02]),
+      );
+
+      await moduleRef.close();
+    });
+
     it('startup validation fails when a secret is missing', async () => {
       @Injectable()
       class TestService {
