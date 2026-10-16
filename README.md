@@ -10,10 +10,9 @@ We created this package to solve a few repeated issues:
 **IAM misconfiguration**
 
 Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations
-surfaced at runtime instead of sooner. This module mitigates that by probing every secret declared via `@InjectSecret`
-at boot — inaccessible secrets fail startup, which prevents misconfigurations from entering production. Secrets fetched
-only via `service.get(...)` (without a corresponding decorator) fall outside this guarantee; see
-[Startup validation scope](#startup-validation-scope) for the full caveat.
+surfaced at runtime instead of sooner. This module probes, at boot, every secret injected into a class the application
+builds. An inaccessible secret fails startup, so the misconfiguration never reaches production. Secrets fetched only
+through `service.get(...)` fall outside this check. See [Startup validation](#startup-validation) for the full scope.
 
 **Repeated loading**
 
@@ -22,30 +21,34 @@ memory, reducing overall latency to retrieve secrets.
 
 **Usage tracking**
 
-"Is this secret actually used?" We can now more definitively answer this question via telemetry—spans for each secret
-access—and dependency injection (e.g., tracing the dependency map).
+"Is this secret actually used?" `collectInjectedSecrets` answers it from the dependency graph. It lists every secret an
+application's classes inject, and which classes inject it.
 
 ## Features
 
-- `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
-- **Startup validation** — fail fast on boot if any registered secret is inaccessible
-- **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
-- **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
-- **Custom backends** — extend via the `SecretBackend` interface
-- **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend`
-  attributes
-- **Global module** — register once in `AppModule`, available everywhere without re-importing
+- `@InjectSecret` and `@InjectSecretBytes` inject secret accessors into constructor parameters.
+- Startup validation probes the secrets the application's classes inject, and can enforce, warn or be switched off.
+- An in-memory cache with a TTL serves repeat reads, and concurrent reads of one secret share one backend fetch.
+- Backends for Google Cloud Secret Manager and for in-memory secrets (tests and local development) ship with the
+  package, and the `SecretBackend` interface adds others.
+- The module is global. Register it once in `AppModule` and every module can inject secrets.
 
 ## Requirements
 
 - Node.js &gt;= 24
-- NestJS `^11.0.0`
+- NestJS 10 or 11 (`@nestjs/common` and `@nestjs/core`)
+- `@google-cloud/secret-manager` 5 or 6, only when you use `GcpSecretManagerBackend`
 
 ## Installation
 
 ```bash
 pnpm add @vori/nestjs-secret-manager
+# Only for GcpSecretManagerBackend
+pnpm add @google-cloud/secret-manager
 ```
+
+The Google Cloud client is an optional peer dependency. The package loads it when you construct a
+`GcpSecretManagerBackend`, and that constructor throws a message naming the package when it is not installed.
 
 ## Quick start
 
@@ -64,7 +67,6 @@ import {
     SecretManagerModule.forRoot({
       defaultBackend: 'gcp',
       backends: [new GcpSecretManagerBackend('my-gcp-project')],
-      validateOnStartup: true,
     }),
   ],
 })
@@ -104,7 +106,7 @@ export class MyService {
 
 `@InjectSecret` resolves to a `SecretAccessor` (`() => Promise<string>`) — calling it fetches the value cache-first from the configured backend. The secret value is **never stored on the consumer's instance**; see [Security considerations](#security-considerations) for why this is the only injection mode.
 
-If `validateOnStartup` is enabled (the default), the application refuses to start when any registered secret can't be fetched, so misconfigured access fails at boot rather than at first call. **Only secrets declared via `@InjectSecret` are probed** — see [Startup validation scope](#startup-validation-scope) for what this excludes.
+By default the application refuses to start when it cannot read a secret that one of its classes injects, so misconfigured access fails at boot rather than at the first call. See [Startup validation](#startup-validation) for what is probed and how to warn instead.
 
 ## Configuration
 
@@ -115,6 +117,7 @@ import {
   GcpSecretManagerBackend,
   InMemorySecretBackend,
   SecretManagerModule,
+  StartupValidation,
 } from '@vori/nestjs-secret-manager';
 
 SecretManagerModule.forRoot({
@@ -128,8 +131,9 @@ SecretManagerModule.forRoot({
     new InMemorySecretBackend({'local-secret': 'local-value'}),
   ],
 
-  // Fail startup if any registered secret is inaccessible (default: true)
-  validateOnStartup: true,
+  // What boot does with the secrets the application's classes inject:
+  // Enforce (default) fails startup, Warn logs, Off skips the check.
+  startupValidation: StartupValidation.Enforce,
 
   // Enable in-memory caching (default: true)
   cacheEnabled: true,
@@ -138,9 +142,6 @@ SecretManagerModule.forRoot({
   // staleness and rotation lag. Set to `0` to cache for the lifetime of
   // the process (explicit escape hatch).
   cacheTTL: 60_000,
-
-  // Enable verbose debug logging for cache hits (default: false)
-  debug: false,
 });
 ```
 
@@ -154,13 +155,87 @@ SecretManagerModule.forRootAsync({
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'gcp',
     backends: [new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID'))],
-    validateOnStartup: config.get('NODE_ENV') === 'production',
+    startupValidation:
+      config.get('NODE_ENV') === 'production'
+        ? StartupValidation.Enforce
+        : StartupValidation.Warn,
   }),
   inject: [ConfigService],
 });
 ```
 
 `useExisting` and `useClass` (via the `SecretManagerOptionsFactory` interface) are also supported.
+
+## Startup validation
+
+When the application initializes, the module collects the secrets that the classes Nest builds inject, probes them all
+in parallel, and logs one line:
+
+```
+Validated 24 injected secret(s) in 312ms
+```
+
+### What is probed
+
+A secret is probed when `@InjectSecret` or `@InjectSecretBytes` sits on a constructor parameter of a class that Nest
+instantiates in this application: a provider, a controller, a guard, interceptor, pipe or filter, or a middleware. A
+factory provider counts too, through its `inject` list. Importing a decorated class is not enough. A class that is
+imported but never provided by any module is not probed, so a worker that shares code with an API does not fail on
+secrets only the API uses.
+
+Secrets read only through `service.get(...)` are not probed. Their names are invisible to the graph, so a typo, a
+missing IAM grant or a deleted secret surfaces at the first runtime call instead. If the name is known at compile time,
+use `@InjectSecret('name')` and validation covers it. Reach for `service.get(...)` only when the name is computed at
+runtime (per tenant, per request, or selected from config), because those names cannot be known at boot. The package
+deliberately ships no side list of extra secrets to validate, because a list kept apart from the call sites drifts from
+them.
+
+### Modes
+
+`startupValidation` takes a `StartupValidation` value:
+
+| Mode | Behavior |
+|------|----------|
+| `StartupValidation.Enforce` (default) | Fails initialization with a `SecretValidationError` when any probe fails. |
+| `StartupValidation.Warn` | Logs the same list of failures once at warn level and keeps booting. |
+| `StartupValidation.Off` | Probes nothing. |
+
+With failures, the summary line ends with the count, as in `Validated 13 injected secret(s) in 210ms, 12 failed`. The
+error message, which `Warn` also logs, lists every failed secret with its backend, version and the classes that inject
+it:
+
+```
+Failed to validate 2 injected secret(s):
+  - payments-api-key (backend: gcp, version: latest), needed by BillingService, PaymentsController: Access denied to secret 'payments-api-key' in backend 'gcp'
+  - signing-key (backend: gcp, version: 3, bytes), needed by TokenSigner: Secret 'signing-key' not found in backend 'gcp' (version: 3)
+```
+
+`SecretValidationError.failures` carries the same data as `{ name, version, backend, kind, consumers, error }` objects,
+where `error` is the underlying `SecretNotFoundError` or `SecretAccessDeniedError`.
+
+### Listing a graph's secrets from a tool
+
+`collectInjectedSecrets(modules)` returns the same list the validator probes, without reading any secret. It reads
+metadata only, so it works on a graph built in preview mode, where Nest instantiates nothing:
+
+```typescript
+import { NestContainer, NestFactory } from '@nestjs/core';
+import { collectInjectedSecrets } from '@vori/nestjs-secret-manager';
+
+const app = await NestFactory.createApplicationContext(AppModule, {
+  preview: true,
+  logger: false,
+});
+// On NestJS 10, app.get(ModulesContainer) returns null in preview mode,
+// so read the container directly.
+const modules = (app as unknown as { container: NestContainer }).container.getModules();
+
+for (const { requirement, consumers } of collectInjectedSecrets(modules)) {
+  console.log(requirement.name, requirement.kind, consumers.join(', '));
+}
+```
+
+Each entry is one `{ requirement, consumers }` pair per injection token, sorted by secret name, with `consumers` sorted.
 
 ## Decorator options
 
@@ -206,7 +281,7 @@ export class TokenSigner {
 }
 ```
 
-The same secret name can be injected as both a string and bytes in different services — the registry tracks them as separate requirements. Programmatic access mirrors the pair: `service.getBytes({ name, version?, backend? })` and `service.getLatestBytes({ name, backend? })`.
+The same secret name can be injected as both a string and bytes in different services. The registry tracks them as separate requirements, and startup validation probes each one. Programmatic access mirrors the pair with `service.getBytes({ name, version?, backend? })`.
 
 ### Why `@InjectSecret` returns a function, not a string
 
@@ -273,30 +348,18 @@ export class MyService {
 
 | Method                                   | Description                                                                              |
 |------------------------------------------|------------------------------------------------------------------------------------------|
-| `get({ name, version?, backend? })`      | Fetch a secret as a UTF-8 string; defaults to `'latest'` and the configured default backend |
-| `getLatest({ name, backend? })`          | Alias for `get({ name, version: 'latest', backend })`                                    |
-| `getBytes({ name, version?, backend? })` | Fetch a secret as raw bytes (`Uint8Array`); use for binary payloads                      |
-| `getLatestBytes({ name, backend? })`     | Alias for `getBytes({ name, version: 'latest', backend })`                               |
-| `clearCache()`                           | Flush all cached entries (both string and bytes views)                                   |
+| `get({ name, version?, backend? })`      | Fetch a secret as a UTF-8 string. Defaults to `'latest'` and the configured default backend. |
+| `getBytes({ name, version?, backend? })` | Fetch a secret as raw bytes (`Uint8Array`) for binary payloads.                          |
+| `clearCache()`                           | Flush every cached entry. A fetch already in flight still answers its callers but is not cached. |
 
-### Startup validation scope
-
-Startup validation iterates the secrets registered by the `@InjectSecret` decorator and probes each one against its
-backend. **Secrets accessed only via `service.get(...)` are not registered** — they're invisible to the validator and
-their access permissions won't be checked at boot. A typo in a name, a missing IAM grant, or a deleted secret will
-surface at the first runtime call instead.
-
-Rule of thumb: if the secret name is known at compile time, use `@InjectSecret('name')` and you get validation for
-free. Reach for `service.get(...)` only when the name is genuinely computed at runtime (per-tenant, per-request,
-selected from config) — those names are not knowable at boot, so per-secret validation isn't possible regardless of
-the API. This is a deliberate scope decision; the package does not ship a side-channel "extra secrets to validate"
-list because maintaining it parallel to the call sites is exactly the rot the decorator-based approach was designed
-to avoid.
+Reads are cache-first. Concurrent reads of one uncached secret share a single backend fetch, even with
+`cacheEnabled: false`, and a failed fetch is never cached, so the next read tries again. Every backend fetch logs
+`Fetching secret` with the backend, name and version at debug level.
 
 ## Testing
 
-`forTesting` configures the module with the in-memory backend and disables startup validation, making test setup
-lightweight:
+`forTesting` configures the module with the in-memory backend, turns caching and startup validation off, and takes the
+secrets a test needs:
 
 ```typescript
 import {Test} from '@nestjs/testing';
@@ -325,7 +388,33 @@ describe('MyService', () => {
 });
 ```
 
-`forTesting` also clears the internal secret registry between calls to prevent pollution across test suites.
+A test that builds a large graph rarely wants to seed every secret it injects. Pass `fallback` to serve any secret the
+test did not seed:
+
+```typescript
+SecretManagerModule.forTesting(
+  { 'api-key': 'test-api-key' },
+  { fallback: (name) => `fake-secret::${name}` },
+);
+```
+
+Without `fallback`, reading an unseeded secret throws `SecretNotFoundError`. The same option exists on
+`new InMemorySecretBackend(secrets, { fallback })`.
+
+## Running without secret access
+
+CLI tools, code generators and builds often construct the application without any access to a secret backend.
+`forSkipLoading()` configures no backends and probes nothing, and every read returns a JSON placeholder:
+
+```typescript
+SecretManagerModule.forSkipLoading();
+
+await secrets.get({ name: 'stripe-config' });
+// '{"_placeholder":true,"key":"stripe-config"}'
+```
+
+The placeholder parses as JSON, so a provider that runs `JSON.parse` on its secret while it starts still starts.
+`getBytes` returns the same text, UTF-8 encoded.
 
 ## Custom backends
 
@@ -343,12 +432,13 @@ class VaultBackend implements SecretBackend {
   constructor(private readonly options: { url: string; token: string }) {
   }
 
+  // `version` is 'latest' when the caller pinned none.
   async get(name: string, version?: string): Promise<string> {
     // Fetch from HashiCorp Vault, AWS Secrets Manager, etc.
   }
 
-  async getLatest(name: string): Promise<string> {
-    return this.get(name);
+  async getBytes(name: string, version?: string): Promise<Uint8Array> {
+    return new TextEncoder().encode(await this.get(name, version));
   }
 }
 
@@ -388,8 +478,8 @@ The module throws typed errors you can catch and handle specifically:
 
 ```typescript
 import {
-  SecretNotFoundError,
   SecretAccessDeniedError,
+  SecretNotFoundError,
 } from '@vori/nestjs-secret-manager';
 
 try {
@@ -404,6 +494,8 @@ try {
   }
 }
 ```
+
+At boot, `SecretValidationError` collects every failed probe. See [Modes](#modes).
 
 Here is how Google Secret Manager gRPC statuses are mapped:
 
@@ -447,14 +539,3 @@ authenticate with:
 gcloud auth application-default login
 ```
 
-## OpenTelemetry
-
-Every secret fetch creates a `secret.get` span with the following attributes:
-
-| Attribute        | Description                                  |
-|------------------|----------------------------------------------|
-| `secret.name`    | The name of the secret                       |
-| `secret.version` | The resolved version (e.g., `latest` or `3`) |
-| `secret.backend` | The backend used (e.g., `gcp`, `memory`)     |
-
-Errors are recorded on the span and the span status is set to `ERROR`.
