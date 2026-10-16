@@ -63,6 +63,42 @@ describe('SecretManagerModule (e2e)', () => {
       await module.close();
     });
 
+    it('serves a fallback for secrets the test did not seed', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forTesting(
+            { seeded: 'real' },
+            { fallback: (name) => `fake-${name}` },
+          ),
+        ],
+      }).compile();
+
+      const service = module.get(SecretManagerService);
+
+      expect(await service.get({ name: 'seeded' })).toBe('real');
+      expect(await service.get({ name: 'unseeded' })).toBe('fake-unseeded');
+
+      await module.close();
+    });
+
+    it('serves binary seeds byte for byte', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forTesting({
+            certificate: new Uint8Array([0, 255]),
+          }),
+        ],
+      }).compile();
+
+      const service = module.get(SecretManagerService);
+
+      expect(await service.getBytes({ name: 'certificate' })).toEqual(
+        new Uint8Array([0, 255]),
+      );
+
+      await module.close();
+    });
+
     it('should work with empty secrets', async () => {
       const module = await Test.createTestingModule({
         imports: [SecretManagerModule.forTesting()],

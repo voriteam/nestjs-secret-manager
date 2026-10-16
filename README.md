@@ -356,7 +356,7 @@ describe('MyService', () => {
 });
 ```
 
-`forTesting` also clears the internal secret registry between calls to prevent pollution across test suites.
+Pass `{ fallback: (name) => value }` as the second argument to serve a value for any secret the test did not seed.
 
 ## Custom backends
 

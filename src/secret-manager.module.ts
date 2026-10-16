@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
+import type { InMemorySecretBackendOptions } from './backends/in-memory.backend';
 import {
   SECRET_MANAGER_OPTIONS,
   SecretKind,
@@ -93,6 +94,7 @@ export class SecretManagerModule {
    * Configure the module for testing with in-memory secrets.
    *
    * @param secrets - Map of secret names to values
+   * @param options.fallback - Value for any secret the test did not seed
    *
    * @example
    * ```typescript
@@ -108,11 +110,12 @@ export class SecretManagerModule {
    * ```
    */
   public static forTesting(
-    secrets: Record<string, string> = {},
+    secrets: Record<string, string | Uint8Array> = {},
+    options: InMemorySecretBackendOptions = {},
   ): DynamicModule {
     return this.forRoot({
       defaultBackend: 'memory',
-      backends: [new InMemorySecretBackend(secrets)],
+      backends: [new InMemorySecretBackend(secrets, options)],
       startupValidation: StartupValidation.Off,
       cacheEnabled: false,
     });

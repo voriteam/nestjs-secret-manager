@@ -122,6 +122,21 @@ describe('InMemorySecretBackend', () => {
     });
   });
 
+  describe('fallback', () => {
+    it('serves unseeded names and versions, UTF-8 encoded for bytes', async () => {
+      const backend = new InMemorySecretBackend(
+        { seeded: 'real' },
+        { fallback: (name) => `fake-${name}` },
+      );
+
+      expect(await backend.get('seeded')).toBe('real');
+      expect(await backend.get('seeded', '2')).toBe('fake-seeded');
+      expect(await backend.getBytes('blob')).toEqual(
+        new TextEncoder().encode('fake-blob'),
+      );
+    });
+  });
+
   describe('has', () => {
     it('should return true for existing secret', () => {
       backend.set('api-key', 'value');
