@@ -46,3 +46,32 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+  nest-10:
+    name: NestJS 10
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install NestJS 10
+        run: pnpm add -D @nestjs/common@10.3.0 @nestjs/core@10.3.0 @nestjs/testing@10.3.0 @nestjs/platform-express@10.3.0
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test

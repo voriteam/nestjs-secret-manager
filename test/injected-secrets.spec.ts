@@ -1,5 +1,5 @@
 import { Inject, Injectable, Module } from '@nestjs/common';
-import { ModulesContainer, NestFactory } from '@nestjs/core';
+import { ModulesContainer, NestContainer, NestFactory } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 
 import {
@@ -193,7 +193,10 @@ describe('collectInjectedSecrets', () => {
       logger: false,
     });
 
-    expect(collectInjectedSecrets(app.get(ModulesContainer))).toEqual([
+    // NestJS 10.3 resolves ModulesContainer to null in preview mode.
+    const { container } = app as unknown as { container: NestContainer };
+
+    expect(collectInjectedSecrets(container.getModules())).toEqual([
       {
         requirement: {
           name: 'preview-secret',
