@@ -220,7 +220,7 @@ export class SecretManagerService implements OnModuleInit {
       backend: backend.name,
       name,
       version,
-      cacheHit,
+      cache_hit: cacheHit,
     });
 
     if (cached !== undefined) {
@@ -302,7 +302,7 @@ export class SecretManagerService implements OnModuleInit {
       backend: backend.name,
       name,
       version,
-      cacheHit,
+      cache_hit: cacheHit,
     });
 
     if (cached !== undefined) {
