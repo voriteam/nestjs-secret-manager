@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
+import {
+  PROPERTY_DEPS_METADATA,
+  SELF_DECLARED_DEPS_METADATA,
+} from '@nestjs/common/constants';
 import { ModulesContainer } from '@nestjs/core';
+import type { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
 
 import {
   SECRET_MANAGER_OPTIONS,
@@ -94,7 +98,8 @@ export class SecretStartupValidator implements OnModuleInit {
 
 /**
  * The secrets the scanned graph injects, each with the names of the classes
- * that inject it. Reads metadata only, so the graph need not be instantiated.
+ * and factory providers that inject it. Reads metadata only, so the graph
+ * need not be instantiated.
  */
 export function collectInjectedSecrets(
   modules: ModulesContainer,
@@ -107,10 +112,10 @@ export function collectInjectedSecrets(
       ...moduleRef.injectables.values(),
       ...moduleRef.middlewares.values(),
     ];
-    for (const { name, metatype } of wrappers) {
-      for (const token of dependencyTokens(metatype)) {
+    for (const wrapper of wrappers) {
+      for (const token of dependencyTokens(wrapper)) {
         const consumers = consumersByToken.get(token) ?? new Set();
-        consumersByToken.set(token, consumers.add(String(name)));
+        consumersByToken.set(token, consumers.add(String(wrapper.name)));
       }
     }
   }
@@ -120,7 +125,14 @@ export function collectInjectedSecrets(
   });
 }
 
-function dependencyTokens(metatype: unknown): unknown[] {
+function dependencyTokens({ metatype, inject }: InstanceWrapper): unknown[] {
+  if (inject) {
+    return inject.map((dependency) =>
+      typeof dependency === 'object' && 'token' in dependency
+        ? dependency.token
+        : dependency,
+    );
+  }
   if (typeof metatype !== 'function') {
     return [];
   }
@@ -129,5 +141,7 @@ function dependencyTokens(metatype: unknown): unknown[] {
   // A subclass's entries follow its parent's, and the injector keeps the last
   // per constructor index.
   const byIndex = new Map(declared.map(({ index, param }) => [index, param]));
-  return [...byIndex.values()];
+  const properties: { type: unknown }[] =
+    Reflect.getMetadata(PROPERTY_DEPS_METADATA, metatype) ?? [];
+  return [...byIndex.values(), ...properties.map(({ type }) => type)];
 }
