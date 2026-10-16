@@ -10,7 +10,7 @@ We created this package to solve a few repeated issues:
 **IAM misconfiguration**
 
 Secrets were added in code, but service accounts were not updated to access these secrets. These misconfigurations
-surfaced at runtime instead of sooner. This module mitigates that by probing every secret declared via `@InjectSecret`
+surfaced at runtime instead of sooner. This module mitigates that by probing every secret the application injects
 at boot — inaccessible secrets fail startup, which prevents misconfigurations from entering production. Secrets fetched
 only via `service.get(...)` (without a corresponding decorator) fall outside this guarantee; see
 [Startup validation scope](#startup-validation-scope) for the full caveat.
@@ -23,7 +23,7 @@ memory, reducing overall latency to retrieve secrets.
 ## Features
 
 - `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
-- **Startup validation** — fail fast on boot if any registered secret is inaccessible
+- **Startup validation** — fail fast on boot if any injected secret is inaccessible
 - **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
 - **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
 - **Custom backends** — extend via the `SecretBackend` interface
@@ -57,7 +57,6 @@ import {
     SecretManagerModule.forRoot({
       defaultBackend: 'gcp',
       backends: [new GcpSecretManagerBackend('my-gcp-project')],
-      validateOnStartup: true,
     }),
   ],
 })
@@ -97,7 +96,7 @@ export class MyService {
 
 `@InjectSecret` resolves to a `SecretAccessor` (`() => Promise<string>`) — calling it fetches the value cache-first from the configured backend. The secret value is **never stored on the consumer's instance**; see [Security considerations](#security-considerations) for why this is the only injection mode.
 
-If `validateOnStartup` is enabled (the default), the application refuses to start when any registered secret can't be fetched, so misconfigured access fails at boot rather than at first call. **Only secrets declared via `@InjectSecret` are probed** — see [Startup validation scope](#startup-validation-scope) for what this excludes.
+By default the application refuses to start when any injected secret can't be fetched, so misconfigured access fails at boot rather than at first call. **Only secrets that the classes Nest builds inject are probed** — see [Startup validation scope](#startup-validation-scope) for what this excludes.
 
 ## Configuration
 
@@ -108,6 +107,7 @@ import {
   GcpSecretManagerBackend,
   InMemorySecretBackend,
   SecretManagerModule,
+  StartupValidation,
 } from '@vori/nestjs-secret-manager';
 
 SecretManagerModule.forRoot({
@@ -121,8 +121,9 @@ SecretManagerModule.forRoot({
     new InMemorySecretBackend({'local-secret': 'local-value'}),
   ],
 
-  // Fail startup if any registered secret is inaccessible (default: true)
-  validateOnStartup: true,
+  // What boot does when an injected secret is inaccessible: Enforce fails
+  // startup (default), Warn logs the failures, Off skips the check
+  startupValidation: StartupValidation.Enforce,
 
   // Enable in-memory caching (default: true)
   cacheEnabled: true,
@@ -144,7 +145,10 @@ SecretManagerModule.forRootAsync({
   useFactory: (config: ConfigService) => ({
     defaultBackend: 'gcp',
     backends: [new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID'))],
-    validateOnStartup: config.get('NODE_ENV') === 'production',
+    startupValidation:
+      config.get('NODE_ENV') === 'production'
+        ? StartupValidation.Enforce
+        : StartupValidation.Warn,
   }),
   inject: [ConfigService],
 });
@@ -269,9 +273,13 @@ export class MyService {
 
 ### Startup validation scope
 
-Startup validation iterates the secrets registered by the `@InjectSecret` decorator and probes each one against its
-backend. **Secrets accessed only via `service.get(...)` are not registered** — they're invisible to the validator and
-their access permissions won't be checked at boot. A typo in a name, a missing IAM grant, or a deleted secret will
+Startup validation probes every secret that a provider, controller, guard, interceptor, pipe, filter or middleware in
+the application's Nest graph injects. A class that carries `@InjectSecret` but is never provided is not probed. Under
+`Enforce`, boot fails with a `SecretValidationError` whose `failures` name each secret, its backend and version, the
+classes that inject it, and the read error. `Warn` logs the same report and keeps booting.
+
+**Secrets accessed only via `service.get(...)` are not injected** — they're invisible to the validator and their access
+permissions won't be checked at boot. A typo in a name, a missing IAM grant, or a deleted secret will
 surface at the first runtime call instead.
 
 Rule of thumb: if the secret name is known at compile time, use `@InjectSecret('name')` and you get validation for

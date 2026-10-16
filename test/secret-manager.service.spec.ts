@@ -28,7 +28,6 @@ describe('SecretManagerService', () => {
           useValue: {
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
             cacheEnabled: true,
           },
         },
@@ -143,7 +142,6 @@ describe('SecretManagerService', () => {
             useValue: {
               defaultBackend: 'memory',
               backends: [new InMemorySecretBackend(), customBackend],
-              validateOnStartup: false,
             },
           },
         ],
@@ -193,81 +191,6 @@ describe('SecretManagerService', () => {
   });
 });
 
-describe('SecretManagerService with validation', () => {
-  beforeEach(() => {
-    secretRegistry.clear();
-  });
-
-  afterEach(() => {
-    secretRegistry.clear();
-  });
-
-  it('should validate secrets on startup when enabled', async () => {
-    secretRegistry.register('api-key');
-
-    const module = await Test.createTestingModule({
-      providers: [
-        SecretManagerService,
-        {
-          provide: SECRET_MANAGER_OPTIONS,
-          useValue: {
-            defaultBackend: 'memory',
-            backends: [new InMemorySecretBackend({ 'api-key': 'value' })],
-            validateOnStartup: true,
-          },
-        },
-      ],
-    }).compile();
-
-    await module.init();
-    await module.close();
-  });
-
-  it('should fail startup when secret is missing', async () => {
-    secretRegistry.register('missing-secret');
-
-    const service = new SecretManagerService({
-      defaultBackend: 'memory',
-      backends: [new InMemorySecretBackend()],
-      validateOnStartup: true,
-    });
-
-    await expect(service.onModuleInit()).rejects.toThrow(
-      /Failed to validate 1 secret[\s\S]*missing-secret/,
-    );
-  });
-
-  it('validates bytes-kind requirements via getBytes', async () => {
-    secretRegistry.register('binary-secret', undefined, 'bytes');
-
-    const service = new SecretManagerService({
-      defaultBackend: 'memory',
-      backends: [
-        new InMemorySecretBackend({
-          'binary-secret': new Uint8Array([0xff, 0x01]),
-        }),
-      ],
-      validateOnStartup: true,
-    });
-
-    await expect(service.onModuleInit()).resolves.not.toThrow();
-  });
-
-  it('fails startup when a bytes-kind requirement is missing', async () => {
-    secretRegistry.register('missing-bytes', undefined, 'bytes');
-
-    const service = new SecretManagerService({
-      defaultBackend: 'memory',
-      backends: [new InMemorySecretBackend()],
-      validateOnStartup: true,
-    });
-
-    await expect(service.onModuleInit()).rejects.toThrow(
-      /Failed to validate 1 secret[\s\S]*missing-bytes/,
-    );
-  });
-});
-
 describe('SecretManagerService without caching', () => {
   let service: SecretManagerService;
   let module: TestingModule;
@@ -286,7 +209,6 @@ describe('SecretManagerService without caching', () => {
           useValue: {
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
             cacheEnabled: false,
           },
         },
@@ -327,7 +249,6 @@ describe('SecretManagerService cacheTTL defaults', () => {
     const service = new SecretManagerService({
       defaultBackend: 'memory',
       backends: [backend],
-      validateOnStartup: false,
     });
 
     expect(await service.get({ name: 'api-key' })).toBe('v1');
@@ -347,7 +268,6 @@ describe('SecretManagerService cacheTTL defaults', () => {
     const service = new SecretManagerService({
       defaultBackend: 'memory',
       backends: [backend],
-      validateOnStartup: false,
       cacheTTL: 0,
     });
 
@@ -366,7 +286,6 @@ describe('SecretManagerService cacheTTL defaults', () => {
           new SecretManagerService({
             defaultBackend: 'memory',
             backends: [new InMemorySecretBackend()],
-            validateOnStartup: false,
             cacheTTL: ttl,
           }),
       ).toThrow(/Invalid cacheTTL/);

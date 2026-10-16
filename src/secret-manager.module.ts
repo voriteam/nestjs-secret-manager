@@ -1,7 +1,11 @@
 import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
-import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
+import {
+  SECRET_MANAGER_OPTIONS,
+  SecretKind,
+  secretRegistry,
+} from './constants';
 import {
   SecretAccessor,
   SecretBytesAccessor,
@@ -10,8 +14,10 @@ import {
   SecretManagerModuleAsyncOptions,
   SecretManagerModuleOptions,
   SecretManagerOptionsFactory,
+  StartupValidation,
 } from './interfaces/secret-manager-options.interface';
 import { SecretManagerService } from './secret-manager.service';
+import { SecretStartupValidator } from './secret-startup-validator';
 
 /**
  * NestJS module for secret management.
@@ -30,7 +36,6 @@ import { SecretManagerService } from './secret-manager.service';
  *     SecretManagerModule.forRoot({
  *       defaultBackend: 'gcp',
  *       backends: [new GcpSecretManagerBackend({ projectId: 'my-project' })],
- *       validateOnStartup: true,
  *     }),
  *   ],
  * })
@@ -76,6 +81,7 @@ export class SecretManagerModule {
           useValue: options,
         },
         SecretManagerService,
+        SecretStartupValidator,
         ...secretProviders,
       ],
       exports: [SecretManagerService, ...secretProviders],
@@ -96,6 +102,7 @@ export class SecretManagerModule {
       providers: [
         ...this.createAsyncProviders(options),
         SecretManagerService,
+        SecretStartupValidator,
         ...secretProviders,
       ],
       exports: [SecretManagerService, ...secretProviders],
@@ -126,7 +133,7 @@ export class SecretManagerModule {
     return this.forRoot({
       defaultBackend: 'memory',
       backends: [new InMemorySecretBackend(secrets)],
-      validateOnStartup: false,
+      startupValidation: StartupValidation.Off,
       cacheEnabled: false,
     });
   }
@@ -192,10 +199,7 @@ export class SecretManagerModule {
    * Useful for CLI tools and environments without secret backend access.
    */
   public static forSkipLoading(): DynamicModule {
-    return this.forRoot({
-      skipLoading: true,
-      validateOnStartup: false,
-    });
+    return this.forRoot({ skipLoading: true });
   }
 
   /**
@@ -216,7 +220,7 @@ export class SecretManagerModule {
         backend: requirement.backend,
       };
 
-      if (requirement.kind === 'bytes') {
+      if (requirement.kind === SecretKind.Bytes) {
         return {
           provide: requirement.token,
           useFactory:

@@ -18,7 +18,10 @@ export const SECRET_BYTES_TOKEN_PREFIX = 'SECRET_BYTES';
 /**
  * The two payload kinds a registered secret can be exposed as.
  */
-export type SecretInjectionKind = 'string' | 'bytes';
+export enum SecretKind {
+  String = 'string',
+  Bytes = 'bytes',
+}
 
 /**
  * Represents a registered secret requirement.
@@ -30,7 +33,7 @@ export interface SecretRequirement {
   /** The injection token (kind-specific). */
   token: string;
   /** Whether the consumer requested a string accessor or a bytes accessor. */
-  kind: SecretInjectionKind;
+  kind: SecretKind;
 }
 
 /**
@@ -46,10 +49,10 @@ class SecretRegistry {
   register(
     name: string,
     options?: InjectSecretOptions,
-    kind: SecretInjectionKind = 'string',
+    kind: SecretKind = SecretKind.String,
   ): SecretRequirement {
     const token =
-      kind === 'bytes'
+      kind === SecretKind.Bytes
         ? getSecretBytesToken(name, options)
         : getSecretToken(name, options);
     const existing = this.secrets.get(token);
