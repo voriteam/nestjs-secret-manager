@@ -12,6 +12,7 @@ import {
   SECRET_MANAGER_OPTIONS,
   SecretKind,
   secretRegistry,
+  unknownSecretKind,
 } from './constants';
 import {
   SecretAccessor,
@@ -230,25 +231,28 @@ export class SecretManagerModule {
         backend: requirement.backend,
       };
 
-      if (requirement.kind === SecretKind.Bytes) {
-        return {
-          provide: requirement.token,
-          useFactory:
-            (service: SecretManagerService): SecretBytesAccessor =>
-            () =>
-              service.getBytes(fetchOptions),
-          inject: [SecretManagerService],
-        };
+      switch (requirement.kind) {
+        case SecretKind.String:
+          return {
+            provide: requirement.token,
+            useFactory:
+              (service: SecretManagerService): SecretAccessor =>
+              () =>
+                service.get(fetchOptions),
+            inject: [SecretManagerService],
+          };
+        case SecretKind.Bytes:
+          return {
+            provide: requirement.token,
+            useFactory:
+              (service: SecretManagerService): SecretBytesAccessor =>
+              () =>
+                service.getBytes(fetchOptions),
+            inject: [SecretManagerService],
+          };
+        default:
+          return unknownSecretKind(requirement.kind);
       }
-
-      return {
-        provide: requirement.token,
-        useFactory:
-          (service: SecretManagerService): SecretAccessor =>
-          () =>
-            service.get(fetchOptions),
-        inject: [SecretManagerService],
-      };
     });
   }
 }

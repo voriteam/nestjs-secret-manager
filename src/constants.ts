@@ -24,6 +24,10 @@ export enum SecretKind {
   Bytes = 'bytes',
 }
 
+export function unknownSecretKind(kind: never): never {
+  throw new Error(`Unknown secret kind: '${String(kind)}'`);
+}
+
 /**
  * One `@InjectSecret` / `@InjectSecretBytes` declaration.
  */
@@ -51,10 +55,12 @@ class SecretRegistry {
     options?: InjectSecretOptions,
     kind: SecretKind = SecretKind.String,
   ): SecretRequirement {
-    const token =
-      kind === SecretKind.Bytes
-        ? getSecretBytesToken(name, options)
-        : getSecretToken(name, options);
+    const token = [
+      tokenPrefix(kind),
+      options?.backend ?? 'default',
+      name,
+      options?.version ?? 'latest',
+    ].join('_');
     const existing = this.secrets.get(token);
     if (existing) {
       return existing;
@@ -105,26 +111,13 @@ class SecretRegistry {
 // Global singleton registry
 export const secretRegistry = new SecretRegistry();
 
-/**
- * Generate a unique injection token for a string-typed secret.
- */
-export function getSecretToken(
-  name: string,
-  options?: InjectSecretOptions,
-): string {
-  const backend = options?.backend ?? 'default';
-  const version = options?.version ?? 'latest';
-  return `${SECRET_TOKEN_PREFIX}_${backend}_${name}_${version}`;
-}
-
-/**
- * Generate a unique injection token for a bytes-typed secret.
- */
-export function getSecretBytesToken(
-  name: string,
-  options?: InjectSecretOptions,
-): string {
-  const backend = options?.backend ?? 'default';
-  const version = options?.version ?? 'latest';
-  return `${SECRET_BYTES_TOKEN_PREFIX}_${backend}_${name}_${version}`;
+function tokenPrefix(kind: SecretKind): string {
+  switch (kind) {
+    case SecretKind.String:
+      return SECRET_TOKEN_PREFIX;
+    case SecretKind.Bytes:
+      return SECRET_BYTES_TOKEN_PREFIX;
+    default:
+      return unknownSecretKind(kind);
+  }
 }

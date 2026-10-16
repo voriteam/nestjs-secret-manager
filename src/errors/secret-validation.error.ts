@@ -38,7 +38,7 @@ export class SecretValidationError extends Error {
         `Failed to validate ${failures.length} injected secret(s):`,
         ...failures.map(
           ({ name, backend, version, kind, consumers, error }) =>
-            `  - ${name} (backend: ${backend}, version: ${version}${kind === SecretKind.Bytes ? ', bytes' : ''}), needed by ${consumers.join(', ')}: ${error.message}`,
+            `  - ${name} (backend: ${backend}, version: ${version}${kind === SecretKind.String ? '' : `, ${kind}`}), needed by ${consumers.join(', ')}: ${error.message}`,
         ),
       ].join('\n'),
     );

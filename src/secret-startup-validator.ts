@@ -1,7 +1,11 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ModulesContainer } from '@nestjs/core';
 
-import { SECRET_MANAGER_OPTIONS, SecretKind } from './constants';
+import {
+  SECRET_MANAGER_OPTIONS,
+  SecretKind,
+  unknownSecretKind,
+} from './constants';
 import type { SecretRequirement } from './constants';
 import {
   SecretValidationError,
@@ -84,12 +88,16 @@ export class SecretStartupValidator implements OnModuleInit {
     backend,
     kind,
   }: SecretRequirement): Promise<void> {
-    if (kind === SecretKind.Bytes) {
-      const bytes = await this.#secrets.getBytes({ name, version, backend });
-      bytes.fill(0);
-      return;
+    switch (kind) {
+      case SecretKind.String:
+        await this.#secrets.get({ name, version, backend });
+        return;
+      case SecretKind.Bytes:
+        (await this.#secrets.getBytes({ name, version, backend })).fill(0);
+        return;
+      default:
+        return unknownSecretKind(kind);
     }
-    await this.#secrets.get({ name, version, backend });
   }
 
   #failureOf(
