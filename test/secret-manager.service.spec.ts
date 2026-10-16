@@ -1,11 +1,15 @@
-import { Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import {
   InMemorySecretBackend,
+  InjectSecret,
+  InjectSecretBytes,
+  SecretManagerModule,
   SecretManagerService,
   SecretNotFoundError,
 } from '../src';
+import type { SecretAccessor, SecretBytesAccessor } from '../src';
 import { SECRET_MANAGER_OPTIONS, secretRegistry } from '../src/testing';
 import { CountingBackend } from './support/counting-backend';
 
@@ -438,5 +442,64 @@ describe('SecretManagerService with skipLoading', () => {
       _placeholder: true,
       key: 'signing-key',
     });
+  });
+});
+
+describe('SecretManagerModule.forTesting with a fallback', () => {
+  beforeEach(() => {
+    secretRegistry.clear();
+  });
+
+  afterEach(() => {
+    secretRegistry.clear();
+  });
+
+  it('serves unseeded names through the fallback', async () => {
+    @Injectable()
+    class ConsumerService {
+      constructor(
+        @InjectSecret('unseeded-key') readonly getKey: SecretAccessor,
+        @InjectSecretBytes('unseeded-blob')
+        readonly getBlob: SecretBytesAccessor,
+      ) {}
+    }
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        SecretManagerModule.forTesting(
+          { seeded: 'real' },
+          { fallback: (name) => `fake-${name}` },
+        ),
+      ],
+      providers: [ConsumerService],
+    }).compile();
+    await moduleRef.init();
+    const service = moduleRef.get(SecretManagerService);
+    const consumer = moduleRef.get(ConsumerService);
+
+    await expect(service.get({ name: 'seeded' })).resolves.toBe('real');
+    await expect(service.get({ name: 'seeded', version: '7' })).resolves.toBe(
+      'fake-seeded',
+    );
+    await expect(consumer.getKey()).resolves.toBe('fake-unseeded-key');
+    expect(new TextDecoder().decode(await consumer.getBlob())).toBe(
+      'fake-unseeded-blob',
+    );
+
+    await moduleRef.close();
+  });
+
+  it('throws SecretNotFoundError for an unseeded name without a fallback', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [SecretManagerModule.forTesting({ seeded: 'real' })],
+    }).compile();
+    const service = moduleRef.get(SecretManagerService);
+
+    await expect(service.get({ name: 'seeded' })).resolves.toBe('real');
+    await expect(service.get({ name: 'unseeded' })).rejects.toThrow(
+      SecretNotFoundError,
+    );
+
+    await moduleRef.close();
   });
 });

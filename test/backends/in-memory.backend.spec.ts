@@ -137,6 +137,35 @@ describe('InMemorySecretBackend', () => {
     });
   });
 
+  describe('fallback', () => {
+    const withFallback = () =>
+      new InMemorySecretBackend(
+        { seeded: 'real' },
+        { fallback: (name) => `fake-${name}` },
+      );
+
+    it('serves an unseeded name or version through the fallback', async () => {
+      const backend = withFallback();
+
+      expect(await backend.get('seeded')).toBe('real');
+      expect(await backend.get('unseeded')).toBe('fake-unseeded');
+      expect(await backend.get('seeded', '2')).toBe('fake-seeded');
+    });
+
+    it('UTF-8 encodes the fallback for bytes reads', async () => {
+      expect(await withFallback().getBytes('blob')).toEqual(
+        new TextEncoder().encode('fake-blob'),
+      );
+    });
+
+    it('does not make an unseeded name present', () => {
+      const backend = withFallback();
+
+      expect(backend.has('seeded')).toBe(true);
+      expect(backend.has('unseeded')).toBe(false);
+    });
+  });
+
   describe('has', () => {
     it('should return true for existing secret', () => {
       backend.set('api-key', 'value');

@@ -27,6 +27,7 @@ export type {
   SecretManagerModuleOptions,
   SecretManagerModuleAsyncOptions,
   SecretManagerOptionsFactory,
+  SecretManagerTestingOptions,
   InjectSecretOptions,
 } from './interfaces/secret-manager-options.interface';
 
@@ -39,3 +40,4 @@ export type { SecretValidationFailure } from './errors/secret-validation.error';
 // Backends
 export { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';
 export { InMemorySecretBackend } from './backends/in-memory.backend';
+export type { InMemorySecretBackendOptions } from './backends/in-memory.backend';

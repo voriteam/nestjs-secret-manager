@@ -117,6 +117,17 @@ export interface SecretManagerModuleAsyncOptions extends Pick<
 }
 
 /**
+ * Options for `SecretManagerModule.forTesting`.
+ */
+export interface SecretManagerTestingOptions {
+  /**
+   * Value for any secret the test did not seed. Without it, reading an
+   * unseeded secret throws SecretNotFoundError.
+   */
+  fallback?: (name: string) => string;
+}
+
+/**
  * Options for the @InjectSecret decorator.
  */
 export interface InjectSecretOptions {

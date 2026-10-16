@@ -20,6 +20,7 @@ import {
   SecretManagerModuleAsyncOptions,
   SecretManagerModuleOptions,
   SecretManagerOptionsFactory,
+  SecretManagerTestingOptions,
   StartupValidation,
 } from './interfaces/secret-manager-options.interface';
 import { SecretManagerService } from './secret-manager.service';
@@ -89,9 +90,11 @@ export class SecretManagerModule {
   }
 
   /**
-   * Configure the module for testing with in-memory secrets.
+   * Configure the module for testing with in-memory secrets. Nothing is
+   * cached and nothing is probed at boot.
    *
    * @param secrets - Map of secret names to values
+   * @param options.fallback - Value for any secret the test did not seed
    *
    * @example
    * ```typescript
@@ -107,11 +110,12 @@ export class SecretManagerModule {
    * ```
    */
   public static forTesting(
-    secrets: Record<string, string> = {},
+    secrets: Record<string, string | Uint8Array> = {},
+    { fallback }: SecretManagerTestingOptions = {},
   ): DynamicModule {
     return this.forRoot({
       defaultBackend: 'memory',
-      backends: [new InMemorySecretBackend(secrets)],
+      backends: [new InMemorySecretBackend(secrets, { fallback })],
       startupValidation: StartupValidation.Off,
       cacheEnabled: false,
     });
