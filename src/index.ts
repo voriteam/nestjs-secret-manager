@@ -10,6 +10,8 @@ export type { InjectedSecret } from './injected-secrets';
 export {
   InjectSecret,
   InjectSecretBytes,
+  secretAccessorToken,
+  secretBytesAccessorToken,
 } from './decorators/inject-secret.decorator';
 export type {
   SecretAccessor,

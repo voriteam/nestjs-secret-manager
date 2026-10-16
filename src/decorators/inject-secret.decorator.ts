@@ -15,6 +15,18 @@ import { InjectSecretOptions } from '../interfaces/secret-manager-options.interf
 export type SecretAccessor = () => Promise<string>;
 
 /**
+ * The token `@InjectSecret(name, options)` injects, for a factory provider's
+ * `inject` list. Startup validation probes the secret wherever the token is
+ * injected.
+ */
+export function secretAccessorToken(
+  name: string,
+  options?: InjectSecretOptions,
+): string {
+  return secretRegistry.register(name, options, SecretKind.String).token;
+}
+
+/**
  * Parameter decorator to inject a lazy accessor for a secret.
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
@@ -47,8 +59,7 @@ export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, SecretKind.String);
-  return Inject(requirement.token);
+  return Inject(secretAccessorToken(name, options));
 }
 
 /**
@@ -58,6 +69,14 @@ export function InjectSecret(
  * would be lossy.
  */
 export type SecretBytesAccessor = () => Promise<Uint8Array>;
+
+/** The token `@InjectSecretBytes(name, options)` injects. */
+export function secretBytesAccessorToken(
+  name: string,
+  options?: InjectSecretOptions,
+): string {
+  return secretRegistry.register(name, options, SecretKind.Bytes).token;
+}
 
 /**
  * Parameter decorator to inject a lazy accessor that returns a secret as
@@ -88,6 +107,5 @@ export function InjectSecretBytes(
   name: string,
   options?: InjectSecretOptions,
 ): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, SecretKind.Bytes);
-  return Inject(requirement.token);
+  return Inject(secretBytesAccessorToken(name, options));
 }

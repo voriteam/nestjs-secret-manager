@@ -1,6 +1,7 @@
 import {
   CanActivate,
   Controller,
+  DynamicModule,
   Get,
   Injectable,
   Logger,
@@ -11,6 +12,7 @@ import {
   OnModuleInit,
   UseGuards,
 } from '@nestjs/common';
+import { ModulesContainer } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 
 import {
@@ -23,6 +25,8 @@ import {
   SecretNotFoundError,
   SecretValidationError,
   StartupValidation,
+  secretAccessorToken,
+  secretBytesAccessorToken,
 } from '../../src';
 import type {
   SecretAccessor,
@@ -746,9 +750,6 @@ describe('SecretManagerModule (e2e)', () => {
     });
 
     it("counts a factory provider's inject, in both forms", async () => {
-      const plain = secretRegistry.register('factory-secret');
-      const objectForm = secretRegistry.register('object-form-secret');
-
       const moduleRef = await Test.createTestingModule({
         imports: [
           SecretManagerModule.forRoot({
@@ -760,12 +761,17 @@ describe('SecretManagerModule (e2e)', () => {
           {
             provide: 'FACTORY_CONSUMER',
             useFactory: (getKey: SecretAccessor) => getKey,
-            inject: [plain.token],
+            inject: [secretAccessorToken('factory-secret')],
           },
           {
             provide: 'OBJECT_FORM_CONSUMER',
             useFactory: (getKey: SecretAccessor) => getKey,
-            inject: [{ token: objectForm.token, optional: true }],
+            inject: [
+              {
+                token: secretAccessorToken('object-form-secret'),
+                optional: true,
+              },
+            ],
           },
         ],
       }).compile();
@@ -1032,6 +1038,139 @@ describe('SecretManagerModule (e2e)', () => {
       );
 
       await module.close();
+    });
+  });
+
+  describe('accessor tokens', () => {
+    it('resolves both tokens to working accessors in a factory provider', async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [
+              new InMemorySecretBackend({
+                'api-key': 'v1',
+                'signing-key': new Uint8Array([0xff, 0x01]),
+              }),
+            ],
+          }),
+        ],
+        providers: [
+          {
+            provide: 'PARTNER_CLIENT',
+            useFactory: (
+              getToken: SecretAccessor,
+              getSigningKey: SecretBytesAccessor,
+            ) => ({ getToken, getSigningKey }),
+            inject: [
+              secretAccessorToken('api-key'),
+              secretBytesAccessorToken('signing-key'),
+            ],
+          },
+        ],
+      }).compile();
+
+      await moduleRef.init();
+      const client = moduleRef.get<{
+        getToken: SecretAccessor;
+        getSigningKey: SecretBytesAccessor;
+      }>('PARTNER_CLIENT');
+
+      await expect(client.getToken()).resolves.toBe('v1');
+      await expect(client.getSigningKey()).resolves.toEqual(
+        new Uint8Array([0xff, 0x01]),
+      );
+
+      await moduleRef.close();
+    });
+
+    it('shares one requirement with the decorator', async () => {
+      @Injectable()
+      class ClassConsumer {
+        constructor(
+          @InjectSecret('shared-secret', { version: '2' })
+          readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        providers: [
+          ClassConsumer,
+          {
+            provide: 'FACTORY_CONSUMER',
+            useFactory: (getKey: SecretAccessor) => getKey,
+            inject: [secretAccessorToken('shared-secret', { version: '2' })],
+          },
+          {
+            provide: 'BYTES_CONSUMER',
+            useFactory: (getKey: SecretBytesAccessor) => getKey,
+            inject: [secretBytesAccessorToken('signing-key')],
+          },
+        ],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(
+        (error as SecretValidationError).failures.map(
+          ({ name, version, kind, consumers }) => ({
+            name,
+            version,
+            kind,
+            consumers,
+          }),
+        ),
+      ).toEqual([
+        {
+          name: 'shared-secret',
+          version: '2',
+          kind: 'string',
+          consumers: ['ClassConsumer', 'FACTORY_CONSUMER'],
+        },
+        {
+          name: 'signing-key',
+          version: 'latest',
+          kind: 'bytes',
+          consumers: ['BYTES_CONSUMER'],
+        },
+      ]);
+    });
+
+    it('stays imported when a secret registers while Nest scans', async () => {
+      @Module({})
+      class LateModule {}
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+          new Promise<DynamicModule>((resolve) =>
+            setTimeout(() => {
+              secretAccessorToken('late-secret');
+              resolve({ module: LateModule });
+            }, 0),
+          ),
+        ],
+      }).compile();
+
+      const root = [...moduleRef.get(ModulesContainer).values()].find(
+        ({ name }) => name === 'RootTestModule',
+      );
+      expect([...(root?.imports ?? [])].map((ref) => ref?.name)).toEqual([
+        'SecretManagerModule',
+        'LateModule',
+        'InternalCoreModule',
+      ]);
+
+      await moduleRef.close();
     });
   });
 });

@@ -134,18 +134,26 @@ export class SecretManagerModule {
     optionsProviders: Provider[],
     imports: ModuleMetadata['imports'] = [],
   ): DynamicModule {
-    const secretProviders = this.createSecretProviders();
+    let secretProviders: Provider[] | undefined;
+    // NestJS 10 rehashes this metadata when it links imports, and a provider
+    // list that differs between those two passes breaks the link.
+    const accessorsAtFirstScan = (): Provider[] =>
+      (secretProviders ??= this.createSecretProviders());
 
     return {
       module: SecretManagerModule,
       imports,
-      providers: [
-        ...optionsProviders,
-        SecretManagerService,
-        SecretStartupValidator,
-        ...secretProviders,
-      ],
-      exports: [SecretManagerService, ...secretProviders],
+      get providers() {
+        return [
+          ...optionsProviders,
+          SecretManagerService,
+          SecretStartupValidator,
+          ...accessorsAtFirstScan(),
+        ];
+      },
+      get exports() {
+        return [SecretManagerService, ...accessorsAtFirstScan()];
+      },
     };
   }
 
