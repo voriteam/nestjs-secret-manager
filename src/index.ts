@@ -21,6 +21,7 @@ export type {
 } from './decorators/inject-secret.decorator';
 
 // Interfaces
+export { StartupValidation } from './interfaces/secret-manager-options.interface';
 export type { SecretBackend } from './interfaces/secret-backend.interface';
 export type {
   SecretManagerModuleOptions,
@@ -32,6 +33,8 @@ export type {
 // Errors
 export { SecretNotFoundError } from './errors/secret-not-found.error';
 export { SecretAccessDeniedError } from './errors/secret-access-denied.error';
+export { SecretValidationError } from './errors/secret-validation.error';
+export type { SecretValidationFailure } from './errors/secret-validation.error';
 
 // Backends
 export { GcpSecretManagerBackend } from './backends/gcp-secret-manager.backend';

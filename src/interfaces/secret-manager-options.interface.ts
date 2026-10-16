@@ -3,6 +3,20 @@ import { ModuleMetadata, Type } from '@nestjs/common';
 import { SecretBackend } from './secret-backend.interface';
 
 /**
+ * What boot does with the secrets the built Nest graph injects. Only classes
+ * and factories Nest constructs count, so a decorated class that is imported
+ * but never provided is not probed.
+ */
+export enum StartupValidation {
+  /** Probe every injected secret and fail boot with SecretValidationError if any read fails. */
+  Enforce = 'enforce',
+  /** Probe every injected secret, log the failures once at warn level, and keep booting. */
+  Warn = 'warn',
+  /** Probe nothing. */
+  Off = 'off',
+}
+
+/**
  * Options for configuring the SecretManagerModule.
  */
 export interface SecretManagerModuleOptions {
@@ -40,11 +54,10 @@ export interface SecretManagerModuleOptions {
   cacheTTL?: number;
 
   /**
-   * Whether to validate all registered secrets on application startup.
-   * When enabled, the application will fail to start if any secret is inaccessible.
-   * @default true
+   * What `onModuleInit` does with the secrets the application's graph injects.
+   * @default StartupValidation.Enforce
    */
-  validateOnStartup?: boolean;
+  startupValidation?: StartupValidation;
 
   /**
    * Whether to enable debug logging for secret access.

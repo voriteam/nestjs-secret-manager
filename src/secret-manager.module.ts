@@ -1,4 +1,10 @@
-import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
+import {
+  DynamicModule,
+  Global,
+  Module,
+  ModuleMetadata,
+  Provider,
+} from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
 import {
@@ -14,8 +20,10 @@ import {
   SecretManagerModuleAsyncOptions,
   SecretManagerModuleOptions,
   SecretManagerOptionsFactory,
+  StartupValidation,
 } from './interfaces/secret-manager-options.interface';
 import { SecretManagerService } from './secret-manager.service';
+import { SecretStartupValidator } from './secret-startup-validator';
 
 /**
  * NestJS module for secret management.
@@ -23,7 +31,7 @@ import { SecretManagerService } from './secret-manager.service';
  * Provides:
  * - SecretManagerService for programmatic access to secrets
  * - @InjectSecret decorator for dependency injection of secret values
- * - Startup validation to fail fast if secrets are inaccessible
+ * - Startup validation of the secrets the application's graph injects
  * - In-memory caching to reduce backend calls
  *
  * @example
@@ -33,8 +41,7 @@ import { SecretManagerService } from './secret-manager.service';
  *   imports: [
  *     SecretManagerModule.forRoot({
  *       defaultBackend: 'gcp',
- *       backends: [new GcpSecretManagerBackend({ projectId: 'my-project' })],
- *       validateOnStartup: true,
+ *       backends: [new GcpSecretManagerBackend('my-project')],
  *     }),
  *   ],
  * })
@@ -51,10 +58,9 @@ import { SecretManagerService } from './secret-manager.service';
  *       useFactory: (config: ConfigService) => ({
  *         defaultBackend: 'gcp',
  *         backends: [
- *           new GcpSecretManagerBackend({
- *             projectId: config.get('GCP_PROJECT_ID'),
- *           }),
+ *           new GcpSecretManagerBackend(config.get('GCP_PROJECT_ID')),
  *         ],
+ *         startupValidation: StartupValidation.Warn,
  *       }),
  *       inject: [ConfigService],
  *     }),
@@ -70,20 +76,7 @@ export class SecretManagerModule {
    * Configure the module with static options.
    */
   public static forRoot(options: SecretManagerModuleOptions): DynamicModule {
-    const secretProviders = this.createSecretProviders();
-
-    return {
-      module: SecretManagerModule,
-      providers: [
-        {
-          provide: SECRET_MANAGER_OPTIONS,
-          useValue: options,
-        },
-        SecretManagerService,
-        ...secretProviders,
-      ],
-      exports: [SecretManagerService, ...secretProviders],
-    };
+    return this.build([{ provide: SECRET_MANAGER_OPTIONS, useValue: options }]);
   }
 
   /**
@@ -92,18 +85,7 @@ export class SecretManagerModule {
   public static forRootAsync(
     options: SecretManagerModuleAsyncOptions,
   ): DynamicModule {
-    const secretProviders = this.createSecretProviders();
-
-    return {
-      module: SecretManagerModule,
-      imports: options.imports ?? [],
-      providers: [
-        ...this.createAsyncProviders(options),
-        SecretManagerService,
-        ...secretProviders,
-      ],
-      exports: [SecretManagerService, ...secretProviders],
-    };
+    return this.build(this.createAsyncProviders(options), options.imports);
   }
 
   /**
@@ -130,9 +112,42 @@ export class SecretManagerModule {
     return this.forRoot({
       defaultBackend: 'memory',
       backends: [new InMemorySecretBackend(secrets)],
-      validateOnStartup: false,
+      startupValidation: StartupValidation.Off,
       cacheEnabled: false,
     });
+  }
+
+  /**
+   * Configure the module to skip all secret loading.
+   * @InjectSecret injects placeholder strings (`SECRET_NOT_LOADED:<name>`).
+   * Useful for CLI tools and environments without secret backend access.
+   */
+  public static forSkipLoading(): DynamicModule {
+    return this.forRoot({ skipLoading: true });
+  }
+
+  /**
+   * Assembles every variant: the options providers, the service, the startup
+   * validator, and one accessor provider per secret registered by the time
+   * this runs. Exports the service and the accessors.
+   */
+  private static build(
+    optionsProviders: Provider[],
+    imports: ModuleMetadata['imports'] = [],
+  ): DynamicModule {
+    const secretProviders = this.createSecretProviders();
+
+    return {
+      module: SecretManagerModule,
+      imports,
+      providers: [
+        ...optionsProviders,
+        SecretManagerService,
+        SecretStartupValidator,
+        ...secretProviders,
+      ],
+      exports: [SecretManagerService, ...secretProviders],
+    };
   }
 
   /**
@@ -188,18 +203,6 @@ export class SecretManagerModule {
         factory.createSecretManagerOptions(),
       inject: [injectToken],
     };
-  }
-
-  /**
-   * Configure the module to skip all secret loading.
-   * @InjectSecret injects placeholder strings (`SECRET_NOT_LOADED:<name>`).
-   * Useful for CLI tools and environments without secret backend access.
-   */
-  public static forSkipLoading(): DynamicModule {
-    return this.forRoot({
-      skipLoading: true,
-      validateOnStartup: false,
-    });
   }
 
   /**

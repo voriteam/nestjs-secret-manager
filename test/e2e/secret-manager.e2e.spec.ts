@@ -1,4 +1,15 @@
-import { Injectable, Module } from '@nestjs/common';
+import {
+  CanActivate,
+  Controller,
+  Get,
+  Injectable,
+  Logger,
+  MiddlewareConsumer,
+  Module,
+  NestMiddleware,
+  NestModule,
+  UseGuards,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
 import {
@@ -7,9 +18,20 @@ import {
   InjectSecretBytes,
   SecretManagerModule,
   SecretManagerService,
+  SecretNotFoundError,
+  SecretValidationError,
+  StartupValidation,
 } from '../../src';
 import type { SecretAccessor, SecretBytesAccessor } from '../../src';
 import { secretRegistry } from '../../src/testing';
+import { CountingBackend } from '../support/counting-backend';
+
+async function initError(init: Promise<unknown>): Promise<unknown> {
+  return await init.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+}
 
 describe('SecretManagerModule (e2e)', () => {
   beforeEach(() => {
@@ -29,7 +51,7 @@ describe('SecretManagerModule (e2e)', () => {
             backends: [
               new InMemorySecretBackend({ 'test-secret': 'test-value' }),
             ],
-            validateOnStartup: false,
+            startupValidation: StartupValidation.Off,
           }),
         ],
       }).compile();
@@ -113,7 +135,7 @@ describe('SecretManagerModule (e2e)', () => {
               backends: [
                 new InMemorySecretBackend({ 'async-secret': 'async-value' }),
               ],
-              validateOnStartup: false,
+              startupValidation: StartupValidation.Off,
             }),
           }),
         ],
@@ -153,7 +175,7 @@ describe('SecretManagerModule (e2e)', () => {
                   'project-secret': config.projectId,
                 }),
               ],
-              validateOnStartup: false,
+              startupValidation: StartupValidation.Off,
             }),
             inject: [CONFIG_TOKEN],
           }),
@@ -213,7 +235,7 @@ describe('SecretManagerModule (e2e)', () => {
           SecretManagerModule.forRoot({
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
+            startupValidation: StartupValidation.Off,
             cacheEnabled: false,
           }),
         ],
@@ -336,7 +358,6 @@ describe('SecretManagerModule (e2e)', () => {
             SecretManagerModule.forRoot({
               defaultBackend: 'memory',
               backends: [new InMemorySecretBackend()],
-              validateOnStartup: true,
             }),
           ],
           providers: [TestService],
@@ -344,6 +365,367 @@ describe('SecretManagerModule (e2e)', () => {
           .compile()
           .then((m) => m.init()),
       ).rejects.toThrow(/Failed to validate.*does-not-exist/s);
+    });
+  });
+
+  describe('startup validation', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('does not probe a decorated class the graph does not build', async () => {
+      @Injectable()
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- declared only so its decorator registers the secret
+      class UnwiredService {
+        constructor(
+          @InjectSecret('unwired-secret') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      @Injectable()
+      class WiredService {
+        constructor(
+          @InjectSecret('wired-secret') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const backend = new CountingBackend({ 'wired-secret': 'value' });
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [backend],
+          }),
+        ],
+        providers: [WiredService],
+      }).compile();
+
+      await moduleRef.init();
+
+      expect(
+        secretRegistry.get('SECRET_default_unwired-secret_latest'),
+      ).toEqual({
+        name: 'unwired-secret',
+        token: 'SECRET_default_unwired-secret_latest',
+        kind: 'string',
+      });
+      expect(backend.calls).toEqual([['get', 'wired-secret', 'latest']]);
+
+      await moduleRef.close();
+    });
+
+    it('throws SecretValidationError naming the secret and its consumer', async () => {
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('payments-api-key') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            startupValidation: StartupValidation.Enforce,
+          }),
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(error).toBeInstanceOf(SecretValidationError);
+      expect((error as SecretValidationError).name).toBe(
+        'SecretValidationError',
+      );
+      expect((error as SecretValidationError).failures).toEqual([
+        {
+          name: 'payments-api-key',
+          version: 'latest',
+          backend: 'memory',
+          consumers: ['ConsumerService'],
+          error: new SecretNotFoundError(
+            'payments-api-key',
+            'memory',
+            'latest',
+          ),
+        },
+      ]);
+      expect((error as SecretValidationError).message).toBe(
+        [
+          'Failed to validate 1 injected secret(s):',
+          "  - payments-api-key (backend: memory, version: latest), needed by ConsumerService: Secret 'payments-api-key' not found in backend 'memory' (version: latest)",
+        ].join('\n'),
+      );
+    });
+
+    it('marks a failed bytes injection in the message', async () => {
+      @Injectable()
+      class TokenSigner {
+        constructor(
+          @InjectSecretBytes('signing-key')
+          readonly getKey: SecretBytesAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        providers: [TokenSigner],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect((error as SecretValidationError).message).toBe(
+        [
+          'Failed to validate 1 injected secret(s):',
+          "  - signing-key (backend: memory, version: latest, bytes), needed by TokenSigner: Secret 'signing-key' not found in backend 'memory' (version: latest)",
+        ].join('\n'),
+      );
+    });
+
+    it('probes a bytes injection through getBytes', async () => {
+      @Injectable()
+      class TokenSigner {
+        constructor(
+          @InjectSecretBytes('signing-key')
+          readonly getKey: SecretBytesAccessor,
+        ) {}
+      }
+
+      const backend = new CountingBackend({
+        'signing-key': new Uint8Array([0xff, 0x01]),
+      });
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [backend],
+          }),
+        ],
+        providers: [TokenSigner],
+      }).compile();
+
+      await moduleRef.init();
+
+      expect(backend.calls).toEqual([['getBytes', 'signing-key', 'latest']]);
+      await expect(moduleRef.get(TokenSigner).getKey()).resolves.toEqual(
+        new Uint8Array([0xff, 0x01]),
+      );
+
+      await moduleRef.close();
+    });
+
+    it("counts a factory provider's inject, in both forms", async () => {
+      const plain = secretRegistry.register('factory-secret');
+      const objectForm = secretRegistry.register('object-form-secret');
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        providers: [
+          {
+            provide: 'FACTORY_CONSUMER',
+            useFactory: (getKey: SecretAccessor) => getKey,
+            inject: [plain.token],
+          },
+          {
+            provide: 'OBJECT_FORM_CONSUMER',
+            useFactory: (getKey: SecretAccessor) => getKey,
+            inject: [{ token: objectForm.token, optional: true }],
+          },
+        ],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(
+        (error as SecretValidationError).failures.map(
+          ({ name, consumers }) => ({ name, consumers }),
+        ),
+      ).toEqual([
+        { name: 'factory-secret', consumers: ['FACTORY_CONSUMER'] },
+        { name: 'object-form-secret', consumers: ['OBJECT_FORM_CONSUMER'] },
+      ]);
+    });
+
+    it('counts a guard applied with @UseGuards', async () => {
+      @Injectable()
+      class SecretGuard implements CanActivate {
+        constructor(
+          @InjectSecret('guard-secret') readonly getKey: SecretAccessor,
+        ) {}
+
+        canActivate(): boolean {
+          return true;
+        }
+      }
+
+      @Controller('guarded')
+      @UseGuards(SecretGuard)
+      class GuardedController {
+        @Get()
+        read(): string {
+          return 'ok';
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        controllers: [GuardedController],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect(
+        (error as SecretValidationError).failures.map(
+          ({ name, consumers }) => ({ name, consumers }),
+        ),
+      ).toEqual([{ name: 'guard-secret', consumers: ['SecretGuard'] }]);
+    });
+
+    it('counts a middleware applied in configure()', async () => {
+      @Injectable()
+      class SecretMiddleware implements NestMiddleware {
+        constructor(
+          @InjectSecret('middleware-secret') readonly getKey: SecretAccessor,
+        ) {}
+
+        use(_req: unknown, _res: unknown, next: () => void): void {
+          next();
+        }
+      }
+
+      @Module({})
+      class AppModule implements NestModule {
+        configure(consumer: MiddlewareConsumer): void {
+          consumer.apply(SecretMiddleware).forRoutes('secured');
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+          }),
+          AppModule,
+        ],
+      }).compile();
+      const app = moduleRef.createNestApplication({ logger: false });
+
+      const error = await initError(app.init());
+
+      expect(
+        (error as SecretValidationError).failures.map((f) => f.consumers),
+      ).toEqual([['SecretMiddleware']]);
+      await app.close();
+    });
+
+    it('logs the failures once at warn level under Warn, and boots', async () => {
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const log = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('payments-api-key') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [new InMemorySecretBackend()],
+            startupValidation: StartupValidation.Warn,
+          }),
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      await moduleRef.init();
+
+      expect(warn.mock.calls).toEqual([
+        [
+          [
+            'Failed to validate 1 injected secret(s):',
+            "  - payments-api-key (backend: memory, version: latest), needed by ConsumerService: Secret 'payments-api-key' not found in backend 'memory' (version: latest)",
+          ].join('\n'),
+        ],
+      ]);
+      expect(log.mock.calls).toContainEqual([
+        expect.stringMatching(
+          /^Validated 1 injected secret\(s\) in \d+ms, 1 failed$/,
+        ),
+      ]);
+
+      await moduleRef.close();
+    });
+
+    it('probes nothing under Off', async () => {
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('off-secret') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const backend = new CountingBackend({ 'off-secret': 'value' });
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [backend],
+            startupValidation: StartupValidation.Off,
+          }),
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      await moduleRef.init();
+      expect(backend.calls).toEqual([]);
+
+      await expect(moduleRef.get(ConsumerService).getKey()).resolves.toBe(
+        'value',
+      );
+      expect(backend.calls).toEqual([['get', 'off-secret', 'latest']]);
+
+      await moduleRef.close();
+    });
+
+    it('rejects an unknown startupValidation value', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            SecretManagerModule.forRoot({
+              defaultBackend: 'memory',
+              backends: [new InMemorySecretBackend()],
+              startupValidation: 'strict' as StartupValidation,
+            }),
+          ],
+        }).compile(),
+      ).rejects.toThrow(
+        "Invalid startupValidation: 'strict'. Expected one of: enforce, warn, off.",
+      );
     });
   });
 
@@ -366,7 +748,7 @@ describe('SecretManagerModule (e2e)', () => {
           SecretManagerModule.forRoot({
             defaultBackend: 'memory',
             backends: [memoryBackend],
-            validateOnStartup: false,
+            startupValidation: StartupValidation.Off,
             cacheEnabled: false,
           }),
         ],

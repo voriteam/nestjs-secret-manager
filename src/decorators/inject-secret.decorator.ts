@@ -18,9 +18,10 @@ export type SecretAccessor = () => Promise<string>;
  * Parameter decorator to inject a lazy accessor for a secret.
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
- * (cache-first). Startup validation still applies — the secret is probed at
- * boot if `validateOnStartup` is enabled — so misconfigured access fails
- * fast even though no value is stored on the consumer.
+ * (cache-first). When Nest builds the decorated class, startup validation
+ * probes the secret at boot unless `startupValidation` is `Off`, so
+ * misconfigured access fails fast even though no value is stored on the
+ * consumer.
  *
  * @example
  * ```typescript
