@@ -5,7 +5,10 @@ export interface SecretValidationFailure {
   readonly name: string;
   /** `'latest'` when the consumer pinned no version. */
   readonly version: string;
-  /** The configured `defaultBackend` when the consumer named none. */
+  /**
+   * The configured `defaultBackend` when the consumer named none, and
+   * `'none'` when neither did.
+   */
   readonly backend: string;
   /** Whether the failed probe read the secret as a string or as bytes. */
   readonly kind: SecretKind;

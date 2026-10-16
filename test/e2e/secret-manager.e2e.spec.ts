@@ -655,6 +655,33 @@ describe('SecretManagerModule (e2e)', () => {
       ]);
     });
 
+    it("reports backend 'none' when neither the consumer nor defaultBackend names one", async () => {
+      @Injectable()
+      class ConsumerService {
+        constructor(
+          @InjectSecret('unrouted-secret') readonly getKey: SecretAccessor,
+        ) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            backends: [new InMemorySecretBackend()],
+          }),
+        ],
+        providers: [ConsumerService],
+      }).compile();
+
+      const error = await initError(moduleRef.init());
+
+      expect((error as SecretValidationError).message).toBe(
+        [
+          'Failed to validate 1 injected secret(s):',
+          '  - unrouted-secret (backend: none, version: latest), needed by ConsumerService: No backend specified and no defaultBackend configured. Pass `backend` to get(), or set `defaultBackend` in module options.',
+        ].join('\n'),
+      );
+    });
+
     it('marks a failed bytes injection in the message', async () => {
       @Injectable()
       class TokenSigner {

@@ -105,7 +105,7 @@ export class SecretStartupValidator implements OnModuleInit {
     return {
       name: requirement.name,
       version: requirement.version ?? 'latest',
-      backend: requirement.backend ?? this.#defaultBackend ?? 'default',
+      backend: requirement.backend ?? this.#defaultBackend ?? 'none',
       kind: requirement.kind,
       consumers,
       error: reason instanceof Error ? reason : new Error(String(reason)),
