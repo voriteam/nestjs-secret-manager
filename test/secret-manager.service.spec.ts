@@ -419,3 +419,24 @@ describe('SecretManagerService concurrent reads', () => {
     ]);
   });
 });
+
+describe('SecretManagerService with skipLoading', () => {
+  it('returns a JSON placeholder naming the secret for string reads', async () => {
+    const service = new SecretManagerService({ skipLoading: true });
+
+    const value = await service.get({ name: 'api-key' });
+
+    expect(JSON.parse(value)).toEqual({ _placeholder: true, key: 'api-key' });
+  });
+
+  it('returns the same placeholder UTF-8 encoded for bytes reads', async () => {
+    const service = new SecretManagerService({ skipLoading: true });
+
+    const bytes = await service.getBytes({ name: 'signing-key' });
+
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({
+      _placeholder: true,
+      key: 'signing-key',
+    });
+  });
+});

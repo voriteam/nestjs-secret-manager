@@ -118,8 +118,8 @@ export class SecretManagerModule {
   }
 
   /**
-   * Configure the module to skip all secret loading.
-   * @InjectSecret injects placeholder strings (`SECRET_NOT_LOADED:<name>`).
+   * Configure the module to skip all secret loading. Every read returns
+   * `{"_placeholder":true,"key":"<name>"}` and nothing is probed at boot.
    * Useful for CLI tools and environments without secret backend access.
    */
   public static forSkipLoading(): DynamicModule {

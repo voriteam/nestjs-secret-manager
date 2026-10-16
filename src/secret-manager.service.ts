@@ -8,6 +8,14 @@ import { SecretAddress, SecretCache, cachePolicyFrom } from './secret-cache';
 const REDACTED = '[SecretManagerService redacted]';
 
 /**
+ * Every read's value under `skipLoading`. JSON, so a consumer that parses its
+ * secret at construction still boots.
+ */
+function skipLoadingPlaceholder(name: string): string {
+  return JSON.stringify({ _placeholder: true, key: name });
+}
+
+/**
  * Service for accessing secrets from configured backends.
  *
  * Features:
@@ -92,7 +100,7 @@ export class SecretManagerService {
     backend?: string;
   }): Promise<string> {
     if (this.#options.skipLoading) {
-      return `SECRET_NOT_LOADED:${name}`;
+      return skipLoadingPlaceholder(name);
     }
 
     const source = this.#getBackend(backend);
@@ -136,7 +144,7 @@ export class SecretManagerService {
     backend?: string;
   }): Promise<Uint8Array> {
     if (this.#options.skipLoading) {
-      return new TextEncoder().encode(`SECRET_NOT_LOADED:${name}`);
+      return new TextEncoder().encode(skipLoadingPlaceholder(name));
     }
 
     const source = this.#getBackend(backend);

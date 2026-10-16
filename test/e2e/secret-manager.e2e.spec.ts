@@ -262,7 +262,7 @@ describe('SecretManagerModule (e2e)', () => {
       const service = module.get<SecretManagerService>(SecretManagerService);
       const value = await service.get({ name: 'any-secret' });
 
-      expect(value).toBe('SECRET_NOT_LOADED:any-secret');
+      expect(value).toBe('{"_placeholder":true,"key":"any-secret"}');
 
       await module.close();
     });
@@ -287,7 +287,7 @@ describe('SecretManagerModule (e2e)', () => {
 
       const testService = module.get<TestService>(TestService);
       await expect(testService.getApiKey()).resolves.toBe(
-        'SECRET_NOT_LOADED:my-api-key',
+        '{"_placeholder":true,"key":"my-api-key"}',
       );
 
       await module.close();
@@ -309,7 +309,7 @@ describe('SecretManagerModule (e2e)', () => {
 
       const service = module.get<SecretManagerService>(SecretManagerService);
       const value = await service.get({ name: 'any-secret' });
-      expect(value).toBe('SECRET_NOT_LOADED:any-secret');
+      expect(value).toBe('{"_placeholder":true,"key":"any-secret"}');
 
       await module.close();
     });
@@ -803,7 +803,9 @@ describe('SecretManagerModule (e2e)', () => {
 
       const testService = module.get(TestService);
       const bytes = await testService.getKey();
-      expect(new TextDecoder().decode(bytes)).toBe('SECRET_NOT_LOADED:any-key');
+      expect(new TextDecoder().decode(bytes)).toBe(
+        '{"_placeholder":true,"key":"any-key"}',
+      );
 
       await module.close();
     });
