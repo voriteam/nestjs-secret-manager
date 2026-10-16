@@ -135,6 +135,48 @@ describe('collectInjectedSecrets', () => {
     await moduleRef.close();
   });
 
+  it('qualifies a name with its module when different classes share it', async () => {
+    function makeConsumerService() {
+      @Injectable()
+      class ConsumerService {
+        constructor(@InjectSecret('shared') readonly getKey: SecretAccessor) {}
+      }
+      return ConsumerService;
+    }
+
+    @Injectable()
+    class SharedService {
+      constructor(@InjectSecret('shared') readonly getKey: SecretAccessor) {}
+    }
+
+    @Module({ providers: [makeConsumerService(), SharedService] })
+    class BillingModule {}
+
+    @Module({ providers: [makeConsumerService(), SharedService] })
+    class RefundsModule {}
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [SecretManagerModule.forTesting(), BillingModule, RefundsModule],
+    }).compile();
+
+    expect(collectInjectedSecrets(moduleRef.get(ModulesContainer))).toEqual([
+      {
+        requirement: {
+          name: 'shared',
+          token: 'SECRET_default_shared_latest',
+          kind: 'string',
+        },
+        consumers: [
+          'BillingModule.ConsumerService',
+          'RefundsModule.ConsumerService',
+          'SharedService',
+        ],
+      },
+    ]);
+
+    await moduleRef.close();
+  });
+
   it('names a class provider by the class Nest constructs', async () => {
     @Injectable()
     class Implementation {
