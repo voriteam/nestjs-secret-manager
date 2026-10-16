@@ -7,6 +7,8 @@ import {
   InjectSecretBytes,
   SecretManagerModule,
   SecretManagerService,
+  secretAccessorToken,
+  secretBytesAccessorToken,
 } from '../../src';
 import type { SecretAccessor, SecretBytesAccessor } from '../../src';
 import { secretRegistry } from '../../src/testing';
@@ -313,6 +315,64 @@ describe('SecretManagerModule (e2e)', () => {
 
       // Calling it returns the value.
       await expect(testService.getApiKey()).resolves.toBe('lazy-value');
+
+      await module.close();
+    });
+  });
+
+  describe('accessor injection outside constructors', () => {
+    it('injects an accessor into a property', async () => {
+      @Injectable()
+      class TestService {
+        @InjectSecret('property-key') readonly getKey!: SecretAccessor;
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [SecretManagerModule.forTesting({ 'property-key': 'value' })],
+        providers: [TestService],
+      }).compile();
+
+      await expect(module.get(TestService).getKey()).resolves.toBe('value');
+
+      await module.close();
+    });
+
+    it('resolves accessor tokens created after forRoot in the same module', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          SecretManagerModule.forRoot({
+            defaultBackend: 'memory',
+            backends: [
+              new InMemorySecretBackend({
+                'api-key': 'v1',
+                'signing-key': new Uint8Array([0xff, 0x01]),
+              }),
+            ],
+          }),
+        ],
+        providers: [
+          {
+            provide: 'PARTNER_CLIENT',
+            useFactory: (
+              getToken: SecretAccessor,
+              getSigningKey: SecretBytesAccessor,
+            ) => ({ getToken, getSigningKey }),
+            inject: [
+              secretAccessorToken('api-key'),
+              secretBytesAccessorToken('signing-key'),
+            ],
+          },
+        ],
+      }).compile();
+      const client = module.get<{
+        getToken: SecretAccessor;
+        getSigningKey: SecretBytesAccessor;
+      }>('PARTNER_CLIENT');
+
+      await expect(client.getToken()).resolves.toBe('v1');
+      await expect(client.getSigningKey()).resolves.toEqual(
+        new Uint8Array([0xff, 0x01]),
+      );
 
       await module.close();
     });

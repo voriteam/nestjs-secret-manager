@@ -22,7 +22,7 @@ memory, reducing overall latency to retrieve secrets.
 
 ## Features
 
-- `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
+- `@InjectSecret` **decorator** — inject secret accessors into services as constructor parameters or properties
 - **Startup validation** — fail fast on boot if any injected secret is inaccessible
 - **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls; concurrent reads of one secret
   share a single fetch
@@ -202,6 +202,27 @@ export class TokenSigner {
 ```
 
 The same secret name can be injected as both a string and bytes in different services — the registry tracks them as separate requirements. Programmatic access mirrors the pair with `service.getBytes({ name, version?, backend? })`.
+
+### Factory providers
+
+A factory provider injects the same accessors by token. `secretAccessorToken` and `secretBytesAccessorToken` take the
+decorator's arguments, and startup validation probes the secret like any other injection:
+
+```typescript
+import {
+  type SecretAccessor,
+  secretAccessorToken,
+} from '@vori/nestjs-secret-manager';
+
+export const partnerClient: FactoryProvider = {
+  provide: PartnerClient,
+  inject: [secretAccessorToken('partner-api-token')],
+  useFactory: (getToken: SecretAccessor) => new PartnerClient(getToken),
+};
+```
+
+Nest builds every provider before startup validation runs, so a factory or constructor that reads its secret fails boot
+with that one read's error instead of the full report. Pass the accessor along and read it when the secret is needed.
 
 ### Why `@InjectSecret` returns a function, not a string
 
