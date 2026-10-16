@@ -68,7 +68,7 @@ export function InjectSecret(
  * keys, encryption keys, or signed binary blobs where decoding to a string
  * would be lossy.
  */
-export type SecretBytesAccessor = () => Promise<Uint8Array>;
+export type SecretBytesAccessor = () => Promise<Uint8Array<ArrayBuffer>>;
 
 /** The token `@InjectSecretBytes(name, options)` injects. */
 export function secretBytesAccessorToken(

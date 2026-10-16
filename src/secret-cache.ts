@@ -51,18 +51,21 @@ function cacheKey({ backend, name, version }: SecretAddress): string {
   return `${backend}:${name}:${version}`;
 }
 
-export class SecretCache<T> {
+export class SecretCache<Loaded, Stored extends Loaded = Loaded> {
   readonly #policy: CachePolicy;
-  readonly #copy: (value: T) => T;
-  readonly #values = new Map<string, CacheEntry<T>>();
-  readonly #inFlight = new Map<string, Promise<T>>();
+  readonly #copy: (value: Loaded) => Stored;
+  readonly #values = new Map<string, CacheEntry<Stored>>();
+  readonly #inFlight = new Map<string, Promise<Stored>>();
 
-  constructor(policy: CachePolicy, copy: (value: T) => T = (value) => value) {
+  constructor(policy: CachePolicy, copy: (value: Loaded) => Stored) {
     this.#policy = policy;
     this.#copy = copy;
   }
 
-  async read(address: SecretAddress, load: () => Promise<T>): Promise<T> {
+  async read(
+    address: SecretAddress,
+    load: () => Promise<Loaded>,
+  ): Promise<Stored> {
     const key = cacheKey(address);
     const hit = this.#fresh(key);
     if (hit !== undefined) {
@@ -100,7 +103,7 @@ export class SecretCache<T> {
     this.#inFlight.clear();
   }
 
-  #fresh(key: string): T | undefined {
+  #fresh(key: string): Stored | undefined {
     const entry = this.#values.get(key);
     if (entry === undefined) {
       return undefined;
@@ -115,7 +118,7 @@ export class SecretCache<T> {
     return entry.value;
   }
 
-  #store(key: string, value: T): void {
+  #store(key: string, value: Stored): void {
     if (this.#policy.retention !== CacheRetention.Never) {
       this.#values.set(key, { value, cachedAt: Date.now() });
     }

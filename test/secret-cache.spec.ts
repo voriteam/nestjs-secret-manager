@@ -4,6 +4,7 @@ import type { CachePolicy } from '../src/secret-cache';
 const address = { backend: 'gcp', name: 'api-key', version: 'latest' };
 const forever: CachePolicy = { retention: CacheRetention.Forever };
 const never: CachePolicy = { retention: CacheRetention.Never };
+const same = (value: string): string => value;
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -19,7 +20,7 @@ function deferred<T>(): {
 describe('SecretCache', () => {
   describe('read', () => {
     it('loads on a miss and serves the stored value afterwards', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       const loads: string[] = [];
 
       const first = await cache.read(address, async () => {
@@ -36,7 +37,7 @@ describe('SecretCache', () => {
     });
 
     it('keeps backends, names and versions apart', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       const addresses = [
         address,
         { ...address, backend: 'memory' },
@@ -58,7 +59,7 @@ describe('SecretCache', () => {
       ['Forever', forever],
       ['Never', never],
     ])('shares one load among concurrent misses (%s)', async (_, policy) => {
-      const cache = new SecretCache<string>(policy);
+      const cache = new SecretCache(policy, same);
       let loads = 0;
 
       const values = await Promise.all(
@@ -75,7 +76,7 @@ describe('SecretCache', () => {
     });
 
     it('stores nothing under Never retention', async () => {
-      const cache = new SecretCache<string>(never);
+      const cache = new SecretCache(never, same);
       const loads: string[] = [];
 
       await cache.read(address, async () => {
@@ -92,7 +93,7 @@ describe('SecretCache', () => {
     });
 
     it('rejects every joiner of a failed load and never stores the failure', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       let loads = 0;
       const failing = async (): Promise<string> => {
         loads += 1;
@@ -115,7 +116,7 @@ describe('SecretCache', () => {
     });
 
     it('turns a synchronous throw from load into a rejection', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
 
       await expect(
         cache.read(address, () => {
@@ -150,7 +151,7 @@ describe('SecretCache', () => {
 
   describe('clear', () => {
     it('empties stored values', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       await cache.read(address, async () => 'v1');
 
       cache.clear();
@@ -159,7 +160,7 @@ describe('SecretCache', () => {
     });
 
     it('lets an earlier load answer its callers without storing or evicting a newer load', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       const beforeLoad = deferred<string>();
       const afterLoad = deferred<string>();
       let loads = 0;
@@ -196,7 +197,7 @@ describe('SecretCache', () => {
     const other = { ...address, name: 'other' };
 
     it('drops one key and keeps the others', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       await cache.read(address, async () => 'v1');
       await cache.read(other, async () => 'o1');
 
@@ -207,7 +208,7 @@ describe('SecretCache', () => {
     });
 
     it('lets a load in flight at invalidation answer its callers without storing or evicting a newer load', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       const beforeLoad = deferred<string>();
       const afterLoad = deferred<string>();
       let loads = 0;
@@ -240,7 +241,7 @@ describe('SecretCache', () => {
     });
 
     it("leaves another key's in-flight load storing its value", async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       const otherLoad = deferred<string>();
 
       const pending = cache.read(other, () => otherLoad.promise);
@@ -262,10 +263,10 @@ describe('SecretCache', () => {
     });
 
     it('reloads once an entry is older than the TTL', async () => {
-      const cache = new SecretCache<string>({
-        retention: CacheRetention.Ttl,
-        ttlMs: 1000,
-      });
+      const cache = new SecretCache(
+        { retention: CacheRetention.Ttl, ttlMs: 1000 },
+        same,
+      );
       await cache.read(address, async () => 'v1');
 
       jest.advanceTimersByTime(1000);
@@ -279,7 +280,7 @@ describe('SecretCache', () => {
 
   describe('redaction', () => {
     it('toJSON returns a redacted placeholder', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       await cache.read(address, async () => 'super-secret-value');
 
       expect(JSON.stringify({ cache })).toBe(
@@ -288,7 +289,7 @@ describe('SecretCache', () => {
     });
 
     it('util.inspect.custom hides contents from console.log / loggers', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       await cache.read(address, async () => 'super-secret-value');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { inspect } = require('node:util') as typeof import('node:util');
@@ -297,7 +298,7 @@ describe('SecretCache', () => {
     });
 
     it('exposes no enumerable state', async () => {
-      const cache = new SecretCache<string>(forever);
+      const cache = new SecretCache(forever, same);
       await cache.read(address, async () => 'super-secret-value');
 
       expect(Object.keys(cache)).toEqual([]);

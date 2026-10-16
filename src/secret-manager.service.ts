@@ -29,7 +29,7 @@ export class SecretManagerService {
   readonly #logger = new Logger(SecretManagerService.name);
   readonly #backends = new Map<string, SecretBackend>();
   readonly #stringCache: SecretCache<string>;
-  readonly #bytesCache: SecretCache<Uint8Array>;
+  readonly #bytesCache: SecretCache<Uint8Array, Uint8Array<ArrayBuffer>>;
   readonly #options: SecretManagerModuleOptions;
 
   constructor(
@@ -37,10 +37,10 @@ export class SecretManagerService {
   ) {
     this.#options = options;
     const policy = cachePolicyFrom(options);
-    this.#stringCache = new SecretCache<string>(policy);
-    this.#bytesCache = new SecretCache<Uint8Array>(
+    this.#stringCache = new SecretCache(policy, (value: string) => value);
+    this.#bytesCache = new SecretCache(
       policy,
-      (bytes) => new Uint8Array(bytes),
+      (bytes: Uint8Array) => new Uint8Array(bytes),
     );
     this.#initializeBackends();
   }
@@ -114,7 +114,7 @@ export class SecretManagerService {
    * @param options.name - Secret name
    * @param options.version - Optional version (defaults to 'latest')
    * @param options.backend - Optional backend name (uses the configured default if omitted)
-   * @returns The secret value as a Uint8Array
+   * @returns A copy of the secret's bytes that the caller owns
    */
   public async getBytes({
     name,
@@ -124,7 +124,7 @@ export class SecretManagerService {
     name: string;
     version?: string;
     backend?: string;
-  }): Promise<Uint8Array> {
+  }): Promise<Uint8Array<ArrayBuffer>> {
     if (this.#options.skipLoading) {
       return new TextEncoder().encode(skipLoadingPlaceholder(name));
     }
