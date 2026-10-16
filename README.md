@@ -26,7 +26,8 @@ application's classes inject, and which classes inject it.
 
 ## Features
 
-- `@InjectSecret` and `@InjectSecretBytes` inject secret accessors into constructor parameters.
+- `@InjectSecret` and `@InjectSecretBytes` inject secret accessors into constructor parameters, and
+  `secretAccessorToken` and `secretBytesAccessorToken` name the same accessors in a factory provider's `inject`.
 - Startup validation probes the secrets the application's classes inject, and can enforce, warn or be switched off.
 - An in-memory cache with a TTL serves repeat reads, and concurrent reads of one secret share one backend fetch.
 - Backends for Google Cloud Secret Manager and for in-memory secrets (tests and local development) ship with the
@@ -179,9 +180,10 @@ Validated 24 injected secret(s) in 312ms
 
 A secret is probed when `@InjectSecret` or `@InjectSecretBytes` sits on a constructor parameter of a class that Nest
 instantiates in this application: a provider, a controller, a guard, interceptor, pipe or filter, or a middleware. A
-factory provider counts too, through its `inject` list. Importing a decorated class is not enough. A class that is
-imported but never provided by any module is not probed, so a worker that shares code with an API does not fail on
-secrets only the API uses.
+factory provider counts too when its `inject` list names a secret's token, as described in
+[Factory providers](#factory-providers). Importing a decorated class is not enough. A class that is imported but never
+provided by any module is not probed, so a worker that shares code with an API does not fail on secrets only the API
+uses.
 
 Secrets read only through `service.get(...)` are not probed. Their names are invisible to the graph, so a typo, a
 missing IAM grant or a deleted secret surfaces at the first runtime call instead. If the name is known at compile time,
@@ -291,6 +293,37 @@ export class TokenSigner {
 
 The same secret name can be injected as both a string and bytes in different services. The registry tracks them as separate requirements, and startup validation probes each one. Programmatic access mirrors the pair with `service.getBytes({ name, version?, backend? })`.
 
+### Factory providers
+
+A factory provider has no constructor parameters to decorate. List the secret's token in its `inject` instead.
+`secretAccessorToken(name, options?)` returns the token `@InjectSecret(name, options)` injects, and
+`secretBytesAccessorToken(name, options?)` returns the token `@InjectSecretBytes(name, options)` injects. Both take the
+decorator's options.
+
+```typescript
+import {Module} from '@nestjs/common';
+import {
+  secretAccessorToken,
+  type SecretAccessor,
+} from '@vori/nestjs-secret-manager';
+
+@Module({
+  providers: [
+    {
+      provide: PartnerClient,
+      useFactory: (getToken: SecretAccessor) => new PartnerClient(getToken),
+      inject: [secretAccessorToken('partner-api-token')],
+    },
+  ],
+  exports: [PartnerClient],
+})
+export class PartnerModule {}
+```
+
+The factory receives the same accessor the decorator would inject. Startup validation probes the secret and names the
+provider's token, `PartnerClient` here, as its consumer. A token and a decorator with the same name and options share
+one requirement, so validation probes the secret once and names both consumers.
+
 ### Why `@InjectSecret` returns a function, not a string
 
 A common pattern in DI containers is to inject the resolved secret directly:
@@ -358,11 +391,25 @@ export class MyService {
 |------------------------------------------|------------------------------------------------------------------------------------------|
 | `get({ name, version?, backend? })`      | Fetch a secret as a UTF-8 string. Defaults to `'latest'` and the configured default backend. |
 | `getBytes({ name, version?, backend? })` | Fetch a secret as raw bytes (`Uint8Array`) for binary payloads.                          |
+| `invalidate({ name, version?, backend? })` | Drop one secret's cached string and bytes entries, so the next read fetches it from the backend. A fetch already in flight still answers its callers but is not cached. |
 | `clearCache()`                           | Flush every cached entry. A fetch already in flight still answers its callers but is not cached. |
 
 Reads are cache-first. Concurrent reads of one uncached secret share a single backend fetch, even with
 `cacheEnabled: false`, and a failed fetch is never cached, so the next read tries again. Every backend fetch logs
 `Fetching secret` with the backend, name and version at debug level.
+
+When a vendor rejects a credential that may have been rotated, call `invalidate` with the secret's name and read it
+again. The other secrets stay cached:
+
+```typescript
+const response = await this.callPartner(await this.getPartnerToken());
+if (response.status === 401) {
+  this.secrets.invalidate({name: 'partner-api-token'});
+  return this.callPartner(await this.getPartnerToken());
+}
+```
+
+Under `forSkipLoading()`, `invalidate` does nothing.
 
 ## Testing
 
