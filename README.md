@@ -29,7 +29,8 @@ access—and dependency injection (e.g., tracing the dependency map).
 
 - `@InjectSecret` **decorator** — inject secret values directly into services as constructor parameters
 - **Startup validation** — fail fast on boot if any injected secret is inaccessible
-- **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls
+- **In-memory caching** — cache-first lookups with optional TTL to reduce backend calls; concurrent reads of one secret
+  share a single fetch
 - **Multiple backends** — Google Cloud Secret Manager and in-memory (for testing/local dev)
 - **Custom backends** — extend via the `SecretBackend` interface
 - **OpenTelemetry tracing** — spans on every secret fetch with `secret.name`, `secret.version`, and `secret.backend`
@@ -276,6 +277,7 @@ export class MyService {
 |------------------------------------------|------------------------------------------------------------------------------------------|
 | `get({ name, version?, backend? })`      | Fetch a secret as a UTF-8 string; defaults to `'latest'` and the configured default backend |
 | `getBytes({ name, version?, backend? })` | Fetch a secret as raw bytes (`Uint8Array`); use for binary payloads                      |
+| `invalidate({ name, version?, backend? })` | Drop one secret's cached string and bytes so its next read fetches it again, as after a rotation |
 | `clearCache()`                           | Flush all cached entries (both string and bytes views)                                   |
 
 ### Startup validation scope

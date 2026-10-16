@@ -127,6 +127,85 @@ describe('SecretManagerService', () => {
     });
   });
 
+  describe('concurrent reads', () => {
+    it('share one backend fetch', async () => {
+      const get = jest.spyOn(memoryBackend, 'get');
+
+      const values = await Promise.all([
+        service.get({ name: 'api-key' }),
+        service.get({ name: 'api-key' }),
+      ]);
+
+      expect(values).toEqual(['test-api-key-value', 'test-api-key-value']);
+      expect(get.mock.calls).toEqual([['api-key', 'latest']]);
+    });
+
+    it('retry after a shared fetch fails', async () => {
+      jest
+        .spyOn(memoryBackend, 'get')
+        .mockRejectedValueOnce(new Error('unavailable'));
+
+      const failed = await Promise.allSettled([
+        service.get({ name: 'api-key' }),
+        service.get({ name: 'api-key' }),
+      ]);
+
+      expect(failed.map(({ status }) => status)).toEqual([
+        'rejected',
+        'rejected',
+      ]);
+      expect(await service.get({ name: 'api-key' })).toBe('test-api-key-value');
+    });
+
+    it('hand each bytes reader its own copy', async () => {
+      const [first, second] = await Promise.all([
+        service.getBytes({ name: 'api-key' }),
+        service.getBytes({ name: 'api-key' }),
+      ]);
+      first.fill(0);
+
+      expect(new TextDecoder().decode(second)).toBe('test-api-key-value');
+    });
+  });
+
+  describe('invalidate', () => {
+    it("drops one secret's string and bytes and keeps the rest", async () => {
+      await service.get({ name: 'api-key' });
+      await service.getBytes({ name: 'api-key' });
+      await service.get({ name: 'db-password' });
+      memoryBackend.set('api-key', 'rotated');
+      memoryBackend.set('db-password', 'rotated');
+
+      service.invalidate({ name: 'api-key' });
+
+      expect(await service.get({ name: 'api-key' })).toBe('rotated');
+      expect(
+        new TextDecoder().decode(await service.getBytes({ name: 'api-key' })),
+      ).toBe('rotated');
+      expect(await service.get({ name: 'db-password' })).toBe(
+        'test-db-password',
+      );
+    });
+
+    it('does not cache a fetch that was in flight', async () => {
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      jest.spyOn(memoryBackend, 'get').mockImplementationOnce(async () => {
+        await gate;
+        return 'stale';
+      });
+
+      const inFlight = service.get({ name: 'api-key' });
+      service.invalidate({ name: 'api-key' });
+      release();
+
+      expect(await inFlight).toBe('stale');
+      expect(await service.get({ name: 'api-key' })).toBe('test-api-key-value');
+    });
+  });
+
   describe('custom backends', () => {
     it('should resolve secrets from a non-default backend', async () => {
       const customBackend = new InMemorySecretBackend({
@@ -230,6 +309,27 @@ describe('SecretManagerService without caching', () => {
 
     const value = await service.get({ name: 'api-key' });
     expect(value).toBe('modified-value');
+  });
+
+  it('shares one fetch between concurrent reads', async () => {
+    const get = jest.spyOn(memoryBackend, 'get');
+
+    const values = await Promise.all([
+      service.get({ name: 'api-key' }),
+      service.get({ name: 'api-key' }),
+    ]);
+
+    expect(values).toEqual(['initial-value', 'initial-value']);
+    expect(get.mock.calls).toEqual([['api-key', 'latest']]);
+  });
+
+  it("hands bytes readers a copy of the backend's array", async () => {
+    const stored = new Uint8Array([1, 2, 3]);
+    jest.spyOn(memoryBackend, 'getBytes').mockResolvedValue(stored);
+
+    (await service.getBytes({ name: 'api-key' })).fill(0);
+
+    expect(stored).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
 
