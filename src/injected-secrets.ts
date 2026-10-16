@@ -1,4 +1,7 @@
-import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
+import {
+  PROPERTY_DEPS_METADATA,
+  SELF_DECLARED_DEPS_METADATA,
+} from '@nestjs/common/constants';
 import { ModulesContainer } from '@nestjs/core';
 
 import { SecretRequirement, secretRegistry } from './constants';
@@ -85,7 +88,8 @@ export function collectInjectedSecrets(
  * the injector's own test for a factory, and it also covers `useExisting`.
  * A class keeps the last `self:paramtypes` entry per index, as the injector
  * does, because a subclass that re-declares a slot inherits its parent's
- * entry for that slot in the same metadata array.
+ * entry for that slot in the same metadata array. Every property entry
+ * counts, inherited ones included, because the injector resolves them all.
  */
 function dependencyTokens(wrapper: InstanceWrapper): unknown[] {
   const { metatype, inject } = wrapper;
@@ -107,7 +111,9 @@ function dependencyTokens(wrapper: InstanceWrapper): unknown[] {
   for (const { index, param } of declared) {
     byIndex.set(index, param);
   }
-  return [...byIndex.values()];
+  const properties: { type: unknown }[] =
+    Reflect.getMetadata(PROPERTY_DEPS_METADATA, metatype) ?? [];
+  return [...byIndex.values(), ...properties.map(({ type }) => type)];
 }
 
 function sortKey({ name, backend, version, kind }: SecretRequirement): string {
