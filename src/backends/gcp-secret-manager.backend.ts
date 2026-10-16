@@ -28,11 +28,13 @@ function loadSecretVersionClient(projectId: string): SecretVersionClient {
   let sdk: typeof import('@google-cloud/secret-manager');
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred so the peer stays optional
-    sdk = require(GCP_PEER);
+    sdk = require('@google-cloud/secret-manager');
   } catch (cause) {
     const missing =
       (cause as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND' &&
-      String((cause as Error).message).includes(GCP_PEER);
+      String((cause as Error).message).startsWith(
+        `Cannot find module '${GCP_PEER}'`,
+      );
     if (!missing) {
       throw cause;
     }
