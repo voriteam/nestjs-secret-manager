@@ -18,6 +18,8 @@ import {
   SecretValidationError,
   StartupValidation,
   collectInjectedSecrets,
+  secretAccessorToken,
+  secretBytesAccessorToken,
 } from '../src';
 import type {
   SecretAccessor,
@@ -58,6 +60,11 @@ class RotatedBillingService extends LegacyBillingService {
   constructor(@InjectSecret('payments-api-key') getKey: SecretAccessor) {
     super(getKey);
   }
+}
+
+@Injectable()
+class WebhookVerifier {
+  @InjectSecret('webhook-key') readonly getKey!: SecretAccessor;
 }
 
 @Injectable()
@@ -171,6 +178,35 @@ describe('startup validation', () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it('probes secrets that properties and factory providers inject', async () => {
+    const error = await bootError({
+      providers: [
+        WebhookVerifier,
+        {
+          provide: 'PARTNER_CLIENT',
+          useFactory: (getKey: SecretAccessor) => getKey,
+          inject: [secretAccessorToken('partner-key')],
+        },
+        {
+          provide: 'CERTIFICATES',
+          useFactory: (getKey: SecretBytesAccessor) => getKey,
+          inject: [
+            { token: secretBytesAccessorToken('certificate'), optional: true },
+          ],
+        },
+      ],
+    });
+
+    expect((error as Error).message).toBe(
+      [
+        'Failed to validate 3 injected secret(s):',
+        "  - webhook-key (backend: memory, version: latest), needed by WebhookVerifier: Secret 'webhook-key' not found in backend 'memory' (version: latest)",
+        "  - partner-key (backend: memory, version: latest), needed by PARTNER_CLIENT: Secret 'partner-key' not found in backend 'memory' (version: latest)",
+        "  - certificate (backend: memory, version: latest, bytes), needed by CERTIFICATES: Secret 'certificate' not found in backend 'memory' (version: latest)",
+      ].join('\n'),
+    );
   });
 
   it('logs only the failures of provided classes and keeps booting under Warn', async () => {
