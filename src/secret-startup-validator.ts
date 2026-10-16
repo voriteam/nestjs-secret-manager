@@ -40,6 +40,16 @@ export class SecretStartupValidator implements OnModuleInit {
     this.#options = options;
     this.#modules = modules;
     this.#secrets = secrets;
+
+    // Nest runs onModuleInit in descending module distance, which Nest 11 sets
+    // to Number.MAX_VALUE for every global module and Nest 10 sets to the
+    // import depth. Infinity runs this report before any other module's hook
+    // can read a missing secret.
+    for (const moduleRef of modules.values()) {
+      if (moduleRef.providers.has(SecretStartupValidator)) {
+        moduleRef.distance = Number.POSITIVE_INFINITY;
+      }
+    }
   }
 
   async onModuleInit(): Promise<void> {
