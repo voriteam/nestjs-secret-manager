@@ -16,10 +16,14 @@ const REDACTED = '[SecretCache redacted]';
  */
 export class SecretCache<T = string> {
   readonly #cache = new Map<string, CacheEntry<T>>();
+  readonly #inFlight = new Map<string, Promise<T>>();
   readonly #ttlMs?: number;
+  readonly #retain: boolean;
 
-  constructor(ttlMs?: number) {
+  /** @param retain - False shares in-flight loads without caching results. */
+  constructor(ttlMs?: number, retain = true) {
     this.#ttlMs = ttlMs;
+    this.#retain = retain;
   }
 
   /**
@@ -65,6 +69,43 @@ export class SecretCache<T = string> {
   }
 
   /**
+   * The cached value, or the result of `load`, which concurrent misses for one
+   * secret share. A load that `delete` or `clear` overtakes is not cached.
+   */
+  async read(
+    backend: string,
+    name: string,
+    version: string,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const cached = this.get(backend, name, version);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const key = this.getCacheKey(backend, name, version);
+    const inFlight = this.#inFlight.get(key);
+    if (inFlight !== undefined) {
+      return await inFlight;
+    }
+
+    const loading: Promise<T> = load()
+      .then((value) => {
+        if (this.#retain && this.#inFlight.get(key) === loading) {
+          this.set(backend, name, value, version);
+        }
+        return value;
+      })
+      .finally(() => {
+        if (this.#inFlight.get(key) === loading) {
+          this.#inFlight.delete(key);
+        }
+      });
+    this.#inFlight.set(key, loading);
+    return await loading;
+  }
+
+  /**
    * Check if a secret is cached and not expired.
    */
   has(backend: string, name: string, version?: string): boolean {
@@ -78,6 +119,7 @@ export class SecretCache<T = string> {
    */
   delete(backend: string, name: string, version?: string): boolean {
     const key = this.getCacheKey(backend, name, version);
+    this.#inFlight.delete(key);
     return this.#cache.delete(key);
   }
 
@@ -86,6 +128,7 @@ export class SecretCache<T = string> {
    */
   clear(): void {
     this.#cache.clear();
+    this.#inFlight.clear();
   }
 
   /**
