@@ -12,6 +12,10 @@ const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 const REDACTED = '[SecretManagerService redacted]';
 
+function skipLoadingPlaceholder(name: string): string {
+  return JSON.stringify({ _placeholder: true, key: name });
+}
+
 /**
  * Service for accessing secrets from configured backends.
  *
@@ -113,7 +117,7 @@ export class SecretManagerService {
     const { name, version, backend: backendName } = options;
 
     if (this.#options.skipLoading) {
-      return `SECRET_NOT_LOADED:${name}`;
+      return skipLoadingPlaceholder(name);
     }
 
     const backend = this.#getBackend(backendName);
@@ -181,7 +185,7 @@ export class SecretManagerService {
     const { name, version, backend: backendName } = options;
 
     if (this.#options.skipLoading) {
-      return new TextEncoder().encode(`SECRET_NOT_LOADED:${name}`);
+      return new TextEncoder().encode(skipLoadingPlaceholder(name));
     }
 
     const backend = this.#getBackend(backendName);

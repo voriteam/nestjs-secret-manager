@@ -59,8 +59,9 @@ export interface SecretManagerModuleOptions {
   startupValidation?: StartupValidation;
 
   /**
-   * Skip loading secrets entirely. @InjectSecret injects placeholder
-   * strings (`SECRET_NOT_LOADED:<name>`) and validation is skipped.
+   * Skip loading secrets entirely. Every read returns the placeholder
+   * `{"_placeholder":true,"key":"<name>"}` (UTF-8 encoded for bytes), and
+   * validation is skipped.
    * Useful for CLI tools and environments without secret backend access.
    * @default false
    */
