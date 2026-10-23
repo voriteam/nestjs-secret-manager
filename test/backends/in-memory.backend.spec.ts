@@ -59,14 +59,13 @@ describe('InMemorySecretBackend', () => {
     });
 
     it('should include backend name in error', async () => {
-      try {
-        await backend.get('non-existent');
-        fail('Expected error to be thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(SecretNotFoundError);
-        expect((error as SecretNotFoundError).backend).toBe('memory');
-        expect((error as SecretNotFoundError).secretName).toBe('non-existent');
-      }
+      const error = await backend.get('non-existent').catch((e) => e);
+
+      expect(error).toBeInstanceOf(SecretNotFoundError);
+      expect(error).toMatchObject({
+        backend: 'memory',
+        secretName: 'non-existent',
+      });
     });
   });
 

@@ -94,11 +94,11 @@ describe('SecretCache', () => {
 
   describe('TTL', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should expire entries after TTL', () => {
@@ -108,7 +108,7 @@ describe('SecretCache', () => {
       expect(ttlCache.get('gcp', 'api-key')).toBe('value');
 
       // Advance time past TTL
-      jest.advanceTimersByTime(1001);
+      vi.advanceTimersByTime(1001);
 
       expect(ttlCache.get('gcp', 'api-key')).toBeUndefined();
     });
@@ -119,7 +119,7 @@ describe('SecretCache', () => {
       ttlCache.set('gcp', 'api-key', 'value');
 
       // Advance time but not past TTL
-      jest.advanceTimersByTime(500);
+      vi.advanceTimersByTime(500);
 
       expect(ttlCache.get('gcp', 'api-key')).toBe('value');
     });
@@ -128,7 +128,7 @@ describe('SecretCache', () => {
       cache.set('gcp', 'api-key', 'value');
 
       // Advance time significantly
-      jest.advanceTimersByTime(1000000);
+      vi.advanceTimersByTime(1000000);
 
       expect(cache.get('gcp', 'api-key')).toBe('value');
     });

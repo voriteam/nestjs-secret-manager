@@ -172,7 +172,9 @@ describe('startup validation', () => {
   });
 
   it('logs how many injected secrets it read and how long that took', async () => {
-    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    const log = vi
+      .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => undefined);
     try {
       await boot({ providers: [PresentReader] });
 
@@ -242,7 +244,9 @@ describe('startup validation', () => {
   });
 
   it('logs only the failures of provided classes and keeps booting under Warn', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const warn = vi
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
     try {
       await boot(
         { providers: [BillingService] },
@@ -258,7 +262,7 @@ describe('startup validation', () => {
   });
 
   it('probes nothing under Off', async () => {
-    const get = jest.spyOn(InMemorySecretBackend.prototype, 'get');
+    const get = vi.spyOn(InMemorySecretBackend.prototype, 'get');
     try {
       await boot(
         { providers: [BillingService] },

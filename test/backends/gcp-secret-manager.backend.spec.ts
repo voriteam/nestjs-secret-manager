@@ -1,3 +1,5 @@
+import Module from 'node:module';
+
 import { GcpSecretManagerBackend } from '../../src';
 
 describe('GcpSecretManagerBackend', () => {
@@ -11,22 +13,26 @@ describe('GcpSecretManagerBackend', () => {
     ).toEqual(['logger', 'name', 'projectId']);
   });
 
-  it('loads the package without the optional peer and fails only when built', () => {
+  it('fails only when built without the optional peer', () => {
     const missing = Object.assign(
       new Error("Cannot find module '@google-cloud/secret-manager'"),
       { code: 'MODULE_NOT_FOUND' },
     );
-
-    jest.isolateModules(() => {
-      jest.doMock('@google-cloud/secret-manager', () => {
+    const { require: load } = Module.prototype;
+    vi.spyOn(Module.prototype, 'require').mockImplementation(function (
+      this: Module,
+      id: string,
+    ) {
+      if (id === '@google-cloud/secret-manager') {
         throw missing;
-      });
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- reloads the package after mocking the peer away
-      const pkg = require('../../src') as typeof import('../../src');
-
-      expect(() => new pkg.GcpSecretManagerBackend('my-project')).toThrow(
-        missing,
-      );
+      }
+      return load.call(this, id);
     });
+
+    try {
+      expect(() => new GcpSecretManagerBackend('my-project')).toThrow(missing);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
