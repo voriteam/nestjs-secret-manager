@@ -44,3 +44,12 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+  test:
+    name: Test
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every build to pass
+        run: test "${{ needs.build.result }}" = success
