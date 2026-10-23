@@ -8,6 +8,8 @@ export { SecretManagerService } from './secret-manager.service';
 export {
   InjectSecret,
   InjectSecretBytes,
+  secretAccessorToken,
+  secretBytesAccessorToken,
 } from './decorators/inject-secret.decorator';
 export type {
   SecretAccessor,

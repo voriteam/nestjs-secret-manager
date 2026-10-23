@@ -1,4 +1,10 @@
-import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
+import {
+  DynamicModule,
+  Global,
+  Module,
+  ModuleMetadata,
+  Provider,
+} from '@nestjs/common';
 
 import { InMemorySecretBackend } from './backends/in-memory.backend';
 import {
@@ -71,21 +77,7 @@ export class SecretManagerModule {
    * Configure the module with static options.
    */
   public static forRoot(options: SecretManagerModuleOptions): DynamicModule {
-    const secretProviders = this.createSecretProviders();
-
-    return {
-      module: SecretManagerModule,
-      providers: [
-        {
-          provide: SECRET_MANAGER_OPTIONS,
-          useValue: options,
-        },
-        SecretManagerService,
-        SecretStartupValidator,
-        ...secretProviders,
-      ],
-      exports: [SecretManagerService, ...secretProviders],
-    };
+    return this.build([{ provide: SECRET_MANAGER_OPTIONS, useValue: options }]);
   }
 
   /**
@@ -94,19 +86,7 @@ export class SecretManagerModule {
   public static forRootAsync(
     options: SecretManagerModuleAsyncOptions,
   ): DynamicModule {
-    const secretProviders = this.createSecretProviders();
-
-    return {
-      module: SecretManagerModule,
-      imports: options.imports ?? [],
-      providers: [
-        ...this.createAsyncProviders(options),
-        SecretManagerService,
-        SecretStartupValidator,
-        ...secretProviders,
-      ],
-      exports: [SecretManagerService, ...secretProviders],
-    };
+    return this.build(this.createAsyncProviders(options), options.imports);
   }
 
   /**
@@ -136,6 +116,31 @@ export class SecretManagerModule {
       startupValidation: StartupValidation.Off,
       cacheEnabled: false,
     });
+  }
+
+  private static build(
+    optionsProviders: Provider[],
+    imports: ModuleMetadata['imports'] = [],
+  ): DynamicModule {
+    let secretProviders: Provider[] | undefined;
+    const accessors = (): Provider[] =>
+      (secretProviders ??= this.createSecretProviders());
+
+    return {
+      module: SecretManagerModule,
+      imports,
+      get providers() {
+        return [
+          ...optionsProviders,
+          SecretManagerService,
+          SecretStartupValidator,
+          ...accessors(),
+        ];
+      },
+      get exports() {
+        return [SecretManagerService, ...accessors()];
+      },
+    };
   }
 
   /**

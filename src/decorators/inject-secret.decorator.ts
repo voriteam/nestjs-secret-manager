@@ -15,7 +15,19 @@ import { InjectSecretOptions } from '../interfaces/secret-manager-options.interf
 export type SecretAccessor = () => Promise<string>;
 
 /**
- * Parameter decorator to inject a lazy accessor for a secret.
+ * The token `@InjectSecret(name, options)` injects, for a factory provider's
+ * `inject` list.
+ */
+export function secretAccessorToken(
+  name: string,
+  options?: InjectSecretOptions,
+): string {
+  return secretRegistry.register(name, options, SecretKind.String).token;
+}
+
+/**
+ * Injects a lazy accessor for a secret into a constructor parameter or a
+ * property.
  *
  * Resolves to a `() => Promise<string>` that fetches the secret on demand
  * (cache-first). Startup validation still applies — the secret is probed at
@@ -44,9 +56,8 @@ export type SecretAccessor = () => Promise<string>;
 export function InjectSecret(
   name: string,
   options?: InjectSecretOptions,
-): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, SecretKind.String);
-  return Inject(requirement.token);
+): PropertyDecorator & ParameterDecorator {
+  return Inject(secretAccessorToken(name, options));
 }
 
 /**
@@ -57,9 +68,17 @@ export function InjectSecret(
  */
 export type SecretBytesAccessor = () => Promise<Uint8Array>;
 
+/** The token `@InjectSecretBytes(name, options)` injects. */
+export function secretBytesAccessorToken(
+  name: string,
+  options?: InjectSecretOptions,
+): string {
+  return secretRegistry.register(name, options, SecretKind.Bytes).token;
+}
+
 /**
- * Parameter decorator to inject a lazy accessor that returns a secret as
- * raw bytes (`Uint8Array`).
+ * Injects a lazy accessor that returns a secret as raw bytes (`Uint8Array`)
+ * into a constructor parameter or a property.
  *
  * Mirrors `@InjectSecret` in every other respect — the value is fetched
  * cache-first on each call and never lives as an instance field on the
@@ -85,7 +104,6 @@ export type SecretBytesAccessor = () => Promise<Uint8Array>;
 export function InjectSecretBytes(
   name: string,
   options?: InjectSecretOptions,
-): ParameterDecorator {
-  const requirement = secretRegistry.register(name, options, SecretKind.Bytes);
-  return Inject(requirement.token);
+): PropertyDecorator & ParameterDecorator {
+  return Inject(secretBytesAccessorToken(name, options));
 }
