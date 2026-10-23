@@ -129,7 +129,7 @@ describe('SecretManagerService', () => {
 
   describe('concurrent reads', () => {
     it('share one backend fetch', async () => {
-      const get = jest.spyOn(memoryBackend, 'get');
+      const get = vi.spyOn(memoryBackend, 'get');
 
       const values = await Promise.all([
         service.get({ name: 'api-key' }),
@@ -141,9 +141,9 @@ describe('SecretManagerService', () => {
     });
 
     it('retry after a shared fetch fails', async () => {
-      jest
-        .spyOn(memoryBackend, 'get')
-        .mockRejectedValueOnce(new Error('unavailable'));
+      vi.spyOn(memoryBackend, 'get').mockRejectedValueOnce(
+        new Error('unavailable'),
+      );
 
       const failed = await Promise.allSettled([
         service.get({ name: 'api-key' }),
@@ -192,7 +192,7 @@ describe('SecretManagerService', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      jest.spyOn(memoryBackend, 'get').mockImplementationOnce(async () => {
+      vi.spyOn(memoryBackend, 'get').mockImplementationOnce(async () => {
         await gate;
         return 'stale';
       });
@@ -312,7 +312,7 @@ describe('SecretManagerService without caching', () => {
   });
 
   it('shares one fetch between concurrent reads', async () => {
-    const get = jest.spyOn(memoryBackend, 'get');
+    const get = vi.spyOn(memoryBackend, 'get');
 
     const values = await Promise.all([
       service.get({ name: 'api-key' }),
@@ -325,7 +325,7 @@ describe('SecretManagerService without caching', () => {
 
   it("hands bytes readers a copy of the backend's array", async () => {
     const stored = new Uint8Array([1, 2, 3]);
-    jest.spyOn(memoryBackend, 'getBytes').mockResolvedValue(stored);
+    vi.spyOn(memoryBackend, 'getBytes').mockResolvedValue(stored);
 
     (await service.getBytes({ name: 'api-key' })).fill(0);
 
@@ -336,11 +336,11 @@ describe('SecretManagerService without caching', () => {
 describe('SecretManagerService cacheTTL defaults', () => {
   beforeEach(() => {
     secretRegistry.clear();
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
     secretRegistry.clear();
   });
 
@@ -359,7 +359,7 @@ describe('SecretManagerService cacheTTL defaults', () => {
 
     // 16 minutes later — past the default 15 min TTL — the cache entry
     // is expired and we re-fetch from the backend.
-    jest.advanceTimersByTime(16 * 60 * 1000);
+    vi.advanceTimersByTime(16 * 60 * 1000);
     expect(await service.get({ name: 'api-key' })).toBe('v2');
   });
 
@@ -374,7 +374,7 @@ describe('SecretManagerService cacheTTL defaults', () => {
     expect(await service.get({ name: 'api-key' })).toBe('v1');
 
     backend.set('api-key', 'v2');
-    jest.advanceTimersByTime(24 * 60 * 60 * 1000); // a day
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
     expect(await service.get({ name: 'api-key' })).toBe('v1');
   });
 

@@ -39,8 +39,8 @@ access—and dependency injection (e.g., tracing the dependency map).
 
 ## Requirements
 
-- Node.js &gt;= 24
-- NestJS `^10.0.0 || ^11.0.0`
+- Node.js 24 or later
+- NestJS `^10.0.0 || ^11.0.0 || ^12.0.0`
 - `@google-cloud/secret-manager` `^5.0.0 || ^6.0.0 || ^7.0.0`, only for `GcpSecretManagerBackend`
 
 ## Installation
