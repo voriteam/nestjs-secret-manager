@@ -8,11 +8,24 @@ on:
 
 jobs:
   build:
+    name: NestJS ${{ matrix.nest }}, GCP SDK ${{ matrix.gcp }}
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [24.x]
+        include:
+          - nest: 11
+            gcp: 6
+          - nest: 11
+            gcp: 7
+            peers: '@google-cloud/secret-manager@7.2.0'
+          - nest: 10
+            gcp: 5
+            peers: >-
+              @nestjs/common@10.3.0
+              @nestjs/core@10.3.0
+              @nestjs/testing@10.3.0
+              @google-cloud/secret-manager@5.6.0
 
     steps:
       - name: Checkout code
@@ -21,14 +34,18 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v6
 
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24.x
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install pinned peers
+        if: matrix.peers
+        run: pnpm add -D ${{ matrix.peers }}
 
       - name: Check formatting
         run: pnpm check-format
