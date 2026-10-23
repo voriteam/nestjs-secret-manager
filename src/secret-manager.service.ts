@@ -1,8 +1,8 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import type { Tracer } from '@opentelemetry/api';
 
-import { SECRET_MANAGER_OPTIONS, secretRegistry } from './constants';
+import { SECRET_MANAGER_OPTIONS } from './constants';
 import type { SecretBackend } from './interfaces/secret-backend.interface';
 import type { SecretManagerModuleOptions } from './interfaces/secret-manager-options.interface';
 import { SecretCache } from './secret-cache';
@@ -17,7 +17,6 @@ const REDACTED = '[SecretManagerService redacted]';
  *
  * Features:
  * - Cache-first lookup to minimize backend calls
- * - Startup validation of all registered secrets
  * - OpenTelemetry tracing
  * - Multiple backend support
  *
@@ -27,7 +26,7 @@ const REDACTED = '[SecretManagerService redacted]';
  * a service holding the cache is accidentally serialized.
  */
 @Injectable()
-export class SecretManagerService implements OnModuleInit {
+export class SecretManagerService {
   readonly #logger = new Logger(SecretManagerService.name);
   readonly #backends = new Map<string, SecretBackend>();
   readonly #stringCache: SecretCache<string>;
@@ -95,68 +94,6 @@ export class SecretManagerService implements OnModuleInit {
         `defaultBackend '${this.#options.defaultBackend}' is not among the configured backends: ${Array.from(this.#backends.keys()).join(', ')}`,
       );
     }
-  }
-
-  public async onModuleInit(): Promise<void> {
-    if (
-      this.#options.skipLoading ||
-      this.#options.validateOnStartup === false
-    ) {
-      return;
-    }
-    await this.#validateAllSecrets();
-  }
-
-  /**
-   * Validate all registered secrets are accessible.
-   * Called during application startup if validateOnStartup is enabled.
-   */
-  async #validateAllSecrets(): Promise<void> {
-    const secrets = secretRegistry.getAll();
-
-    if (secrets.length === 0) {
-      this.#logger.log('No secrets registered for validation');
-      return;
-    }
-
-    this.#logger.log(`Validating ${secrets.length} registered secret(s)...`);
-
-    const errors: Error[] = [];
-
-    for (const secret of secrets) {
-      try {
-        // Use the same kind of fetch the consumer registered with — for
-        // truly binary secrets, decoding to UTF-8 silently substitutes
-        // replacement characters but doesn't throw, so probing via the
-        // matching method gives the most accurate validation.
-        if (secret.kind === 'bytes') {
-          await this.getBytes({
-            name: secret.name,
-            version: secret.version,
-            backend: secret.backend,
-          });
-        } else {
-          await this.get({
-            name: secret.name,
-            version: secret.version,
-            backend: secret.backend,
-          });
-        }
-        this.#logger.log(`Secret validated: ${secret.name}`);
-      } catch (error) {
-        errors.push(error as Error);
-        this.#logger.error(`Secret validation failed: ${secret.name}`, error);
-      }
-    }
-
-    if (errors.length > 0) {
-      const errorMessages = errors.map((e) => `  - ${e.message}`).join('\n');
-      throw new Error(
-        `Failed to validate ${errors.length} secret(s):\n${errorMessages}`,
-      );
-    }
-
-    this.#logger.log(`All ${secrets.length} secret(s) validated successfully`);
   }
 
   /**

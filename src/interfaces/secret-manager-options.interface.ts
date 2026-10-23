@@ -3,6 +3,19 @@ import { ModuleMetadata, Type } from '@nestjs/common';
 import { SecretBackend } from './secret-backend.interface';
 
 /**
+ * What boot does with the secrets that the classes and factories Nest builds
+ * inject.
+ */
+export enum StartupValidation {
+  /** Fail boot with SecretValidationError if any injected secret cannot be read. */
+  Enforce = 'enforce',
+  /** Log the failures at warn level and keep booting. */
+  Warn = 'warn',
+  /** Probe nothing. */
+  Off = 'off',
+}
+
+/**
  * Options for configuring the SecretManagerModule.
  */
 export interface SecretManagerModuleOptions {
@@ -40,11 +53,10 @@ export interface SecretManagerModuleOptions {
   cacheTTL?: number;
 
   /**
-   * Whether to validate all registered secrets on application startup.
-   * When enabled, the application will fail to start if any secret is inaccessible.
-   * @default true
+   * What boot does when a secret the application's graph injects cannot be read.
+   * @default StartupValidation.Enforce
    */
-  validateOnStartup?: boolean;
+  startupValidation?: StartupValidation;
 
   /**
    * Skip loading secrets entirely. @InjectSecret injects placeholder
